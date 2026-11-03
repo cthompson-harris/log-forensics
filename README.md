@@ -54,4 +54,6 @@ Two blocks near the top of the script are meant to be edited:
 - For eCommerce databases in WAL mode, only the main `.db` file is read; the newest entries may be in the `.db-wal` file.
 - One SQLite database is analyzed at a time.
 - Example below:
+<img width="1169" height="703" alt="image" src="https://github.com/user-attachments/assets/0f1869a6-78e5-42e8-9e7a-208c1fbf0f7d" />
+
 <img width="1161" height="1218" alt="image" src="https://github.com/user-attachments/assets/c489d57f-1145-4e5b-95c9-16aec5db334b" />
