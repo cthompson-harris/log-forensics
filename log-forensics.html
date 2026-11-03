@@ -1,0 +1,1329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log Forensics</title>
+<style>
+  :root{
+    --ink:#0e1420; --panel:#161d2b; --elev:#1d2637; --line:#2a3547; --line-soft:#212b3d;
+    --tx:#e6ebf2; --tx-dim:#8b98ad; --tx-faint:#5f6c81; --accent:#5b8def;
+    --ok:#3fb98f; --info:#5b8def; --debug:#6b7a99; --warn:#e0a340; --err:#e0536b; --fatal:#c0417a;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--ink);color:var(--tx);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  body{line-height:1.5}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 24px 80px}
+  header.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+  .brand{display:flex;align-items:baseline;gap:12px}
+  .brand h1{font-size:19px;font-weight:650;letter-spacing:-.01em;margin:0}
+  .brand .tag{color:var(--tx-faint);font-size:12.5px}
+  .headtools{display:flex;align-items:center;gap:12px}
+  .filemeta{font-family:var(--mono);font-size:12px;color:var(--tx-dim);text-align:right}
+  .filemeta b{color:var(--tx);font-weight:600}
+  .btn{appearance:none;border:1px solid var(--line);background:var(--elev);color:var(--tx);font:inherit;font-size:13.5px;padding:9px 15px;border-radius:9px;cursor:pointer;transition:.12s}
+  .btn:hover{border-color:var(--accent);background:#20293c}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#08111f;font-weight:600}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn.ghost{background:transparent}
+  .btn.sm{padding:6px 11px;font-size:12.5px}
+  input[type=file]{display:none}
+  .hidden{display:none!important}
+
+  /* ---- home ---- */
+  .lede{color:var(--tx-dim);font-size:14px;max-width:60ch;margin:0 0 26px}
+  .modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;align-items:start}
+  .mode{border:1px solid var(--line);background:linear-gradient(180deg,var(--panel),#131a27);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:10px;transition:.15s;cursor:pointer}
+  .mode:hover,.mode.hot{border-color:var(--accent);background:linear-gradient(180deg,#182136,#141b29)}
+  .mode .mh{display:flex;align-items:center;gap:10px}
+  .mode .ic{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--elev);border:1px solid var(--line)}
+  .mode h3{margin:0;font-size:15.5px;font-weight:650}
+  .mode p{margin:0;color:var(--tx-dim);font-size:13px;flex:1;min-height:78px}
+  .mode .ex{font-family:var(--mono);font-size:11.5px;color:var(--tx-faint)}
+  .mode .row{display:flex;gap:8px;margin-top:4px}
+  svg.ico{width:18px;height:18px;stroke:var(--accent);fill:none;stroke-width:1.7}
+
+  /* ---- shared report ---- */
+  .verdict{border-radius:14px;padding:20px 22px;margin:22px 0;border:1px solid var(--line);background:var(--panel);display:flex;gap:18px;align-items:flex-start}
+  .verdict .dot{width:12px;height:12px;border-radius:50%;margin-top:7px;flex:0 0 auto}
+  .verdict.sev-crit{border-color:#4a2530;background:linear-gradient(180deg,#20161c,#181017)} .verdict.sev-crit .dot{background:var(--err);box-shadow:0 0 0 4px #e0536b22}
+  .verdict.sev-warn{border-color:#413418;background:linear-gradient(180deg,#1e1a12,#17140f)} .verdict.sev-warn .dot{background:var(--warn);box-shadow:0 0 0 4px #e0a34022}
+  .verdict.sev-ok{border-color:#1c3a30;background:linear-gradient(180deg,#12201b,#0f1915)} .verdict.sev-ok .dot{background:var(--ok);box-shadow:0 0 0 4px #3fb98f22}
+  .verdict h3{margin:0 0 4px;font-size:16px;font-weight:650;letter-spacing:-.01em}
+  .verdict p{margin:0;color:var(--tx-dim);font-size:13.5px}
+  .verdict .win{font-family:var(--mono);color:var(--tx)}
+
+  .strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
+  .stat{background:var(--panel);border:1px solid var(--line-soft);border-radius:11px;padding:14px 16px}
+  .stat .k{font-size:12px;color:var(--tx-dim)} .stat .v{font-family:var(--mono);font-size:23px;font-weight:600;letter-spacing:-.02em;margin-top:3px}
+  .stat.err .v{color:var(--err)} .stat.warn .v{color:var(--warn)} .stat.ok .v{color:var(--ok)}
+
+  section{margin-bottom:30px}
+  .h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
+  .h h2{font-size:15px;font-weight:600;letter-spacing:.01em;margin:0}
+  .h .sub{font-size:12.5px;color:var(--tx-faint)}
+  .card{background:var(--panel);border:1px solid var(--line-soft);border-radius:12px;padding:16px}
+
+  /* ---- flow visual ---- */
+  .flow{display:flex;align-items:stretch;gap:0}
+  .fbox{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;background:var(--elev);padding:13px 15px}
+  .fbox .ft{font-size:11px;color:var(--tx-faint);margin-bottom:6px}
+  .fbox .fmain{font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--tx);word-break:break-word}
+  .fbox .fl{font-family:var(--mono);font-size:11.5px;color:var(--tx-dim);margin-top:4px;word-break:break-word;line-height:1.5}
+  .fbox.fail{border-color:#4a2530;background:linear-gradient(180deg,#20161c,#171017)}
+  .fbox.fail .fmain{color:var(--err)}
+  .fbox.good{border-color:#1c3a30;background:linear-gradient(180deg,#12201b,#0f1915)}
+  .fbox.good .fmain{color:var(--ok)}
+  .fconn{flex:0 0 54px;display:grid;place-items:center;color:var(--tx-faint)}
+  .fconn svg{width:40px;height:26px;overflow:visible}
+  @media(max-width:720px){
+    .flow{flex-direction:column}
+    .fconn{flex:0 0 34px;transform:rotate(90deg)}
+  }
+
+  #tlWrap{position:relative}
+  canvas{display:block;width:100%;height:210px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--tx-dim)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+  .tip{position:absolute;pointer-events:none;background:#0a0f18;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-family:var(--mono);font-size:11.5px;color:var(--tx);box-shadow:0 8px 26px #0008;opacity:0;transition:opacity .08s;z-index:5;min-width:150px}
+  .tip .t{color:var(--tx-dim);margin-bottom:5px}
+  .tip .r{display:flex;justify-content:space-between;gap:14px}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:820px){.cols{grid-template-columns:1fr}}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-weight:600;color:var(--tx-dim);font-size:11.5px;padding:0 10px 8px;border-bottom:1px solid var(--line)}
+  td{padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-family:var(--mono)}
+  .mono{font-family:var(--mono)} .muted{color:var(--tx-dim)}
+  .clickrow{cursor:pointer} .clickrow:hover td{background:#182135}
+  .path{font-family:var(--mono);font-size:12px;word-break:break-all}
+  .msg{font-family:var(--mono);font-size:12px;color:var(--tx-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:520px}
+  .cause{font-size:12.5px;color:var(--tx-dim);margin-top:2px;line-height:1.45}
+  .bar{height:7px;background:var(--elev);border-radius:4px;overflow:hidden;min-width:40px}
+  .bar>i{display:block;height:100%;border-radius:4px}
+
+  .pill{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:6px;font-weight:600;white-space:nowrap}
+  .s2{background:#12352a;color:var(--ok)} .s3{background:#232c3b;color:var(--redir,#6b7a99)} .s4{background:#3a2f14;color:var(--warn)} .s5{background:#3a1a22;color:var(--err)}
+  .lv-Fatal{background:#3a1330;color:#ff8fc4} .lv-Error{background:#3a1a22;color:var(--err)} .lv-Warn{background:#3a2f14;color:var(--warn)} .lv-Info{background:#16233b;color:#9cc2ff} .lv-Debug{background:#232c3b;color:var(--debug)} .lv-Trace{background:#20252e;color:var(--tx-faint)}
+  .st-Failed{background:#3a1a22;color:var(--err)} .st-Incomplete{background:#3a2f14;color:var(--warn)} .st-OK{background:#12352a;color:var(--ok)}
+  .sevpill{background:#3a1a22;color:var(--err)} .sevpill.mid{background:#3a2f14;color:var(--warn)} .sevpill.low{background:#232c3b;color:var(--tx-dim)}
+
+  .mapping{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;font-size:12.5px;color:var(--tx-dim);margin-bottom:6px}
+  .mapping label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--tx-faint)}
+  select,.markin{background:var(--elev);border:1px solid var(--line);color:var(--tx);border-radius:7px;padding:6px 9px;font:inherit;font-size:12.5px}
+  .markin{width:100%;font-family:var(--mono);font-size:12px}
+  .markrow{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+  @media(max-width:640px){.markrow{grid-template-columns:1fr}}
+  .markrow label{font-size:11px;color:var(--tx-faint);display:block;margin-bottom:4px}
+
+  .filterbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+  .filterbar .lbl{font-size:12px;color:var(--tx-faint);margin-right:2px}
+  .chip{font-size:12px;padding:5px 11px;border-radius:20px;border:1px solid var(--line);background:var(--elev);color:var(--tx-dim);cursor:pointer}
+  .chip.on{border-color:var(--accent);color:var(--tx);background:#1a2437}
+  .search{flex:1;min-width:180px;background:var(--elev);border:1px solid var(--line);color:var(--tx);border-radius:8px;padding:7px 11px;font:inherit;font-size:13px}
+  .empty{color:var(--tx-faint);font-size:13px;padding:14px 4px}
+
+  .overlay{position:fixed;inset:0;background:#05080ecc;backdrop-filter:blur(2px);z-index:50;display:none;align-items:flex-start;justify-content:center;padding:40px 20px;overflow:auto}
+  .overlay.on{display:flex}
+  .sheet{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:900px;width:100%;padding:22px}
+  .sheet .sh{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:6px}
+  .sheet h3{margin:0;font-size:16px} .sheet .subttl{color:var(--tx-dim);font-size:12.5px;margin-bottom:16px;font-family:var(--mono)}
+  .step{display:grid;grid-template-columns:88px 62px 1fr;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-soft)}
+  .step:last-child{border-bottom:none}
+  .step .tm{font-family:var(--mono);font-size:11.5px;color:var(--tx-dim)}
+  .step .src{font-family:var(--mono);font-size:11.5px;color:var(--tx-faint);margin-top:3px}
+  .step .m{font-family:var(--mono);font-size:12.5px;color:var(--tx);white-space:pre-wrap;word-break:break-word}
+  .step .m.clip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  .step .m.clip::after{content:" ▾ expand";color:var(--accent);font-size:11px}
+  .idlbl{font-size:11px;color:var(--tx-faint);margin:16px 0 5px;text-transform:uppercase;letter-spacing:.04em}
+  .idval{font-family:var(--mono);font-size:12.5px;color:var(--tx);white-space:pre-wrap;word-break:break-word;line-height:1.55}
+  .stk{font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word;background:#0d1420;border:1px solid var(--line-soft);border-radius:8px;padding:11px 13px;margin:0;overflow:auto;color:var(--tx-dim)}
+
+  .foot{margin-top:40px;padding-top:18px;border-top:1px solid var(--line-soft);color:var(--tx-faint);font-size:12px}
+  .warnbar{background:#241a10;border:1px solid #43331a;color:#e7bd82;border-radius:9px;padding:10px 13px;font-size:12.5px;margin-bottom:18px}
+  .tzlbl{font-size:11.5px;color:var(--tx-faint);margin-right:6px}
+  #tzWrap select{padding:4px 7px;font-size:12px}
+  .clientbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 14px;margin-bottom:16px}
+  .cl-lbl{font-size:12.5px;color:var(--tx-dim);font-weight:600}
+  .cl-in{background:var(--elev);border:1px solid var(--line);color:var(--tx);border-radius:8px;padding:7px 11px;font:inherit;font-size:13px;font-family:var(--mono);min-width:160px;text-transform:uppercase}
+  .cl-in::placeholder{text-transform:none;font-family:var(--sans)}
+  .cl-active{margin-left:auto}
+  .cl-chip{font-size:12px;color:var(--accent);background:#16213a;border:1px solid #2b3b5c;border-radius:20px;padding:4px 11px}
+  .pickcell{width:30px;text-align:center;padding-left:6px;padding-right:0}
+  input.pick{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;vertical-align:middle}
+  .pickbar{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:55;background:#0c121e;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 34px #000b;display:flex;align-items:center;gap:10px;padding:10px 14px;max-width:94vw;flex-wrap:wrap}
+  .pickbar.hidden{display:none}
+  .pickbar .pc{font-size:13px;color:var(--tx);font-weight:600;margin-right:2px}
+  .pickbar .flash{font-size:12px;color:var(--ok);min-width:0}
+  .sheetadd{margin-left:auto}
+  .scan{position:fixed;inset:0;background:#05080ecc;backdrop-filter:blur(2px);z-index:60;display:flex;align-items:center;justify-content:center}
+  .scan.hidden{display:none}
+  .scanbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px 30px;width:min(420px,86vw);text-align:center}
+  .scantitle{font-size:14.5px;font-weight:600;margin-bottom:16px}
+  .scanbar{height:8px;background:var(--elev);border-radius:5px;overflow:hidden;border:1px solid var(--line-soft)}
+  .scanbar>i{display:block;height:100%;width:0;background:var(--accent);border-radius:5px;transition:width .15s}
+  .scanpct{font-family:var(--mono);font-size:12px;color:var(--tx-dim);margin-top:10px}
+  /* ---- where to find ---- */
+  details.where{margin-top:6px;border-top:1px solid var(--line-soft);padding-top:10px;cursor:default}
+  details.where summary{cursor:pointer;font-size:12.5px;color:var(--accent);list-style:none;display:flex;align-items:center;gap:6px;user-select:none}
+  details.where summary::-webkit-details-marker{display:none}
+  details.where summary::before{content:"▸";font-size:10px;transition:transform .12s}
+  details.where[open] summary::before{transform:rotate(90deg)}
+  .wpath{display:flex;align-items:center;gap:8px;margin-top:9px;background:#0d1420;border:1px solid var(--line-soft);border-radius:8px;padding:7px 9px}
+  .wpath code{flex:1;min-width:0;font-family:var(--mono);font-size:11.5px;color:var(--tx);overflow-wrap:anywhere;line-height:1.45}
+  .wpath code .ph{color:var(--warn)}
+  .wpath.unset code{color:var(--warn);font-style:italic}
+  .wcopy{flex:0 0 auto;font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid var(--line);background:var(--elev);color:var(--tx-dim);cursor:pointer}
+  .wcopy:hover{border-color:var(--accent);color:var(--tx)}
+  .wfiles{font-size:12px;color:var(--tx-dim);margin-top:8px}
+  .wfiles b{color:var(--tx);font-weight:600}
+  .wtips{margin:8px 0 0;padding-left:16px;font-size:12px;color:var(--tx-dim);line-height:1.5}
+  .wtips li{margin-bottom:4px}
+  .wtips code{overflow-wrap:anywhere;font-family:var(--mono);font-size:11.5px;color:var(--tx);background:#0d1420;padding:0 4px;border-radius:4px}
+.next{border:1px solid #2b3b5c;background:linear-gradient(180deg,#141d30,#121a29);border-radius:12px;padding:16px 20px;margin:-8px 0 22px}
+  .next .nh{font-size:14px;font-weight:650;margin-bottom:8px}
+  .next .nt{font-weight:500;color:var(--tx-dim)}
+  .next ol{margin:0;padding-left:20px;font-size:13px;line-height:1.55;color:var(--tx)}
+  .next li{margin-bottom:6px}
+  .next code,.wfiles code{font-family:var(--mono);font-size:12px;background:#0d1420;padding:1px 5px;border-radius:4px}
+  .next .esc{margin-top:10px;font-size:12.5px;color:#e7bd82;background:#241a10;border:1px solid #43331a;border-radius:8px;padding:8px 11px}
+  .next .esc b{color:#f0c88f}
+  .next .nfoot{font-size:11.5px;color:var(--tx-faint);margin-top:10px}
+  .next.insheet{margin:0 0 4px;padding:12px 16px}
+  .wsec{margin-top:12px}
+  .wlbl{font-size:11px;color:var(--tx-faint);text-transform:uppercase;letter-spacing:.04em}
+  .wsec .wpath{margin-top:5px}
+  .wfiles .ph,.wtips .ph{color:var(--warn);font-family:var(--mono);font-size:11.5px}
+  .other{margin-top:34px}
+  .omodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;align-items:start}
+  .ocard{border:1px dashed var(--line);border-radius:12px;padding:14px 16px;background:#121927}
+  .ocard h4{margin:0 0 3px;font-size:14px;font-weight:650}
+  .ocard p{min-height:36px;margin:0 0 4px;font-size:12.5px;color:var(--tx-dim)}
+  .droptip{font-size:12.5px;color:var(--tx-faint);margin-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><h1 id="brandTitle">Log Forensics</h1><span class="tag" id="brandTag">offline incident reconstruction</span></div>
+    <div class="headtools">
+      <span class="filemeta" id="filemeta"></span>
+      <button class="btn sm hidden" id="homeBtn">← Home</button>
+    </div>
+  </header>
+
+  <!-- HOME -->
+  <div id="home">
+    <p class="lede">Drop a log onto the matching card. Everything is parsed in this page — nothing is uploaded, so client data never leaves the server. Each report reconstructs the flow of what happened and where it failed.</p>
+    <div class="modes">
+      <div class="mode" data-mode="iis">
+        <div class="mh"><span class="ic"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg></span><h3>IIS web logs</h3></div>
+        <p>W3C request logs. Reconstructs traffic, auto-detects the incident window, decodes status/substatus to a cause.</p>
+        <div class="ex">.log · c-ip, sc-status, time-taken…</div>
+        <div class="row"><button class="btn primary sm" data-open="iis">Choose file</button><button class="btn ghost sm" data-sample="iis">Sample</button></div>
+        <details class="where" data-where="iis"><summary>Where to find these logs</summary><div class="wbody"></div></details>
+      </div>
+      <div class="mode" data-mode="db">
+        <div class="mh"><span class="ic"><svg class="ico" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><h3>E-Commerce logs</h3></div>
+        <p>SQLite notification store. Groups rows by RequestId to replay each notification and flag failed or never-sent ones.</p>
+        <div class="ex">.db / .sqlite · RequestId, LogLevel, Message…</div>
+        <div class="row"><button class="btn primary sm" data-open="db">Choose file</button><button class="btn ghost sm" data-sample="db">Sample</button></div>
+        <details class="where" data-where="db"><summary>Where to find these logs</summary><div class="wbody"></div></details>
+      </div>
+      <div class="mode" data-mode="mssql">
+        <div class="mh"><span class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="7" cy="6" r="0.5" fill="currentColor"/></svg></span><h3>SQL Server log</h3></div>
+        <p>SQL Server ERRORLOG. Surfaces severe errors, login failures by client IP, deadlocks, log-full and I/O faults.</p>
+        <div class="ex">ERRORLOG · Error: N, Severity, [CLIENT: ip]…</div>
+        <div class="row"><button class="btn primary sm" data-open="mssql">Choose file</button><button class="btn ghost sm" data-sample="mssql">Sample</button></div>
+        <details class="where" data-where="mssql"><summary>Where to find these logs</summary><div class="wbody"></div></details>
+      </div>
+      <div class="mode" data-mode="inovah">
+        <div class="mh"><span class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3 L22 20 H2 Z"/><line x1="12" y1="10" x2="12" y2="14.5"/><circle cx="12" cy="17.6" r="0.6" fill="currentColor"/></svg></span><h3>iNovah logs</h3></div>
+        <p>System Innovators app logs. Lists errors &amp; exceptions; click any issue for its full message and stack trace.</p>
+        <div class="ex">AdminMgmtPortal.txt · When, Category, Exception…</div>
+        <div class="row"><button class="btn primary sm" data-open="inovah">Choose file</button><button class="btn ghost sm" data-sample="inovah">Sample</button></div>
+        <details class="where" data-where="inovah"><summary>Where to find these logs</summary><div class="wbody"></div></details>
+      </div>
+    </div>
+    <div class="droptip">Not sure which card? Drop the file anywhere on this page and it will be recognised automatically.</div>
+    <section class="other"><div class="h"><h2>Other logs</h2><span class="sub">no analyzer yet — open these in Notepad, or add a dedicated panel later</span></div><div class="omodes" id="otherLogs"></div></section>
+  </div>
+
+  <!-- REPORT SHELL -->
+  <div id="report" class="hidden">
+    <div id="clientBar" class="clientbar hidden"><span class="cl-lbl">Client&nbsp;ID</span><input id="clientIn" class="cl-in" placeholder="e.g. FAY71D" spellcheck="false" autocomplete="off"><span id="ipWrap" style="display:none;align-items:center;gap:10px"><span class="cl-lbl">IP</span><input id="ipIn" class="cl-in" placeholder="e.g. 10.77.107.102" spellcheck="false" autocomplete="off"></span><button id="clientApply" class="btn sm">Filter</button><button id="clientClear" class="btn sm ghost hidden">Clear</button><span id="clientActive" class="cl-active"></span></div>
+    <div id="warnbar" class="hidden"></div>
+    <div id="cfg"></div>
+    <div id="verdict"></div>
+    <div id="nextSteps" class="hidden"></div>
+    <section id="flowSec"><div class="h"><h2>Flow</h2><span class="sub" id="flowSub"></span></div><div class="card"><div id="flow" class="flow"></div></div></section>
+    <div class="strip" id="strip"></div>
+    <section id="tlSec"><div class="h"><h2 id="tlTitle">Timeline</h2><span class="sub" id="tlSub"></span><span id="tzWrap" style="margin-left:auto"></span></div>
+      <div class="card"><div id="tlWrap"><canvas id="tl"></canvas><div class="tip" id="tip"></div></div><div class="legend" id="legend"></div></div>
+    </section>
+    <div id="modeBody"></div>
+    <div class="foot" id="foot"></div>
+  </div>
+</div>
+<div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+<div id="pickBar" class="pickbar hidden"><span class="pc" id="pickCount">0 selected</span><button class="btn sm primary" id="pickCopy">Copy for ticket</button><button class="btn sm" id="pickDownload">Download .txt</button><button class="btn sm ghost" id="pickClear">Clear</button><span class="flash" id="pickFlash"></span></div>
+<div id="scan" class="scan hidden"><div class="scanbox"><div class="scantitle" id="scantitle">Scanning log…</div><div class="scanbar"><i id="scanfill"></i></div><div class="scanpct" id="scanpct">0%</div></div></div>
+
+<input type="file" id="file" multiple>
+<script>
+"use strict";
+/* =====================================================================
+   EDIT ME — where each log lives on your servers.
+   Shown under "Where to find these logs" on each card.
+   Use <Placeholder> for parts that vary; they're highlighted for users.
+   A path starting with "(" is treated as "not configured yet".
+   ===================================================================== */
+const LOG_LOCATIONS={
+  iis:{
+    sections:[
+      {label:"Web server — site request logs",path:String.raw`%SystemDrive%\inetpub\logs\LogFiles\W3SVC<SiteID>`,files:"u_exYYMMDD.log — one file per day (e.g. u_ex261103.log = Nov 3, 2026)"},
+      {label:"Web server — requests rejected before reaching the site",path:String.raw`C:\Windows\System32\LogFiles\HTTPERR`,files:"httperr*.log — useful when the app pool is down (no analyzer yet; open in Notepad)"}],
+    tips:["Not sure of the Site ID? Open IIS Manager → Sites; it's the <b>ID</b> column. Or click the site → <b>Logging</b> to see its exact folder.",
+          "IIS writes times in <b>UTC</b>, not local time — use the time adjuster on the report to line it up with other logs.",
+          "You can select several days at once; they're merged onto one timeline."]},
+  db:{
+    sections:[
+      {label:"App server — Payment Processing Service",path:String.raw`C:\ProgramData\System Innovators\iNovah\System Logs\eCommerce`,files:"eCommercePaymentProcessingLog-<MM-DD-YYYY>.db"},
+      {label:"App server — Configuration Portal (ORCA/AMP)",path:String.raw`C:\Program Files (x86)\System Innovators\iNovah.eCommerce.Configuration.App\App_Data`,files:"eCommerceConfigPortalLog-<MM-DD-YYYY>.db"},
+      {label:"App server — Internal API Service",path:String.raw`C:\Program Files (x86)\System Innovators\iNovah.eCommerce.WebService.Internal\App_Data`,files:"eCommerceServiceInternal-<MM-DD-YYYY>.db"},
+      {label:"DMZ web server — Notification Mover",path:String.raw`C:\Program Files (x86)\System Innovators\iNovah.eCommerce.PaymentMover\App_Data`,files:"eCommercePaymentMoverLog-<MM-DD-YYYY>.db"},
+      {label:"DMZ web server — External API Service",path:String.raw`C:\Program Files (x86)\System Innovators\iNovah.eCommerce.WebService\App_Data`,files:"eCommerceWebServiceApiLog-<MM-DD-YYYY>.db"}],
+    tips:["There's one .db per day — pick the date the problem happened. One database at a time.",
+          "You don't need DB Browser for SQLite: this page reads the .db directly. Copy the file somewhere first rather than opening the live one.",
+          "Payments that couldn't be matched to an iNovah instance may be in <code>System Logs\\UnknownInstance\\WebPay.Services.PaymentProcessing.txt</code> — drop that on the <b>iNovah</b> card."]},
+  mssql:{
+    sections:[
+      {label:"SQL Server (full edition)",path:String.raw`C:\Program Files\Microsoft SQL Server\MSSQL<Version>.<Instance>\MSSQL\Log`,files:"<b>ERRORLOG</b> (current) · ERRORLOG.1 … ERRORLOG.6 (older; .1 is the most recent). No file extension."},
+      {label:"SQL Express — workstation & app server",path:String.raw`C:\Program Files\Microsoft SQL Server\MSSQL<Version>.SQLEXPRESS\MSSQL\Log`,files:"<b>ERRORLOG</b>, ERRORLOG.1 …"},
+      {label:"SQL Express — user instance",path:String.raw`C:\Users\<UserName>\AppData\Local\Microsoft\Microsoft SQL Server Data\SQLEXPRESS`,files:"the error log in this folder"}],
+    tips:["<b>Version</b>: 10_50 = 2008 R2, 12 = 2014, 13 = 2016, 14 = 2017, 15 = 2019, 16 = 2022. <b>Instance</b> is MSSQLSERVER for a default full install.",
+          "<b>UserName</b> is the logged-in Windows user on a workstation, or the \"Log On As\" account of the <i>SQL Server (SQLEXPRESS)</i> service on an app server.",
+          "Quickest way to get the exact path — in SSMS run <code>SELECT SERVERPROPERTY('ErrorLogFileName')</code>.",
+          "If the file won't open, copy it to your desktop first and drop the copy."]},
+  inovah:{
+    sections:[
+      {label:"App server — iNovah services & web apps",path:String.raw`C:\ProgramData\System Innovators\iNovah\System Logs\<Instance>`,files:"<b>AdminMgmtPortal.txt</b> and the other .txt logs, one per component"},
+      {label:"Workstation — iNovah Cashier",path:String.raw`C:\ProgramData\System Innovators\iNovah\System Logs\Default`,files:"the Cashier .txt log"},
+      {label:"App server — eCommerce \"unknown instance\"",path:String.raw`C:\ProgramData\System Innovators\iNovah\System Logs\UnknownInstance`,files:"WebPay.Services.PaymentProcessing.txt — eCommerce payments that couldn't be validated in iNovah"}],
+    tips:["<b>Instance</b> is the iNovah instance name (e.g. FAY71T) — it's also shown on the report.",
+          "The EMV Certification log (when enabled) is in the same folder: <i>&lt;Instance&gt;</i> on the app server, <i>Default</i> on a workstation.",
+          "These locations can be changed in the iNovah .config files — if the folder is empty, check there.",
+          "ProgramData is a hidden folder: paste the path into File Explorer's address bar instead of browsing to it."]}
+};
+/* Logs with no analyzer yet — shown as a reference list under the cards. */
+const OTHER_LOCATIONS=[
+  {name:"SSRS (Reporting Services)",desc:"Report errors and report-server failures.",
+    sections:[
+      {label:"Report server — SSRS 2016 and earlier",path:String.raw`C:\Program Files\Microsoft SQL Server\MSRS<Version>.<Instance>\Reporting Services\LogFiles`,files:"ReportServerService_*.log"},
+      {label:"Report server — SSRS 2017 and later",path:String.raw`C:\Program Files\Microsoft SQL Server Reporting Services\SSRS\LogFiles`,files:"ReportServerService_*.log"}],
+    tips:["<b>Version</b>: MSRS10 = 2008, MSRS10_50 = 2008 R2, MSRS11 = 2012, MSRS12 = 2014, MSRS13 = 2016.",
+          "<b>Instance</b> is the SSRS instance name, e.g. <code>MSRS12.REPORTS</code>."]},
+  {name:"Tender Retail / MCM",desc:"PIN pad and card-processor traffic.",
+    sections:[{label:"MCM machine",path:String.raw`<MCMFolder>\log`,files:"see the list below"}],
+    tips:["<code>terminalname_yyyymmdd.dg</code> — diagnostic log: PIN pad requests/responses and detailed processor responses",
+          "<code>multi_yyyymmdd.log</code> — MCM ↔ processor interaction",
+          "<code>yyyymmdd.log</code> — requests received · <code>yyyymmdd.rcp</code> — transaction responses incl. cancels · <code>yyyymmdd.rct</code> — receipt output",
+          "<code>terminalname_yyyymmdd.log</code> — MCM 4 (Chase) only"]},
+  {name:"PayConex POSLink",desc:"Card device communication, per device IP.",
+    sections:[{label:"Workstation and app server",path:String.raw`C:\ProgramData\System Innovators\iNovah\System Logs`,files:"POSLinkLog_VERBOSE_IP_<IP>_Date_<YYYYMMDD> (e.g. POSLinkLog_VERBOSE_IP_10_20_0_36_Date_20220223)"}],
+    tips:["Match the IP in the file name to the PIN pad that had the problem."]},
+  {name:"Installation logs",desc:"Failed installs and upgrades.",
+    sections:[{label:"App server & workstations",path:String.raw`C:\ProgramData\System Innovators\Installation Logs`,files:"iNovah application, iNovah Cashier and Form Editor installers"}],
+    tips:["Sort by date modified and open the newest one around the time of the failed install."]}
+];
+const MODE_NAMES={iis:"IIS web log",db:"E-Commerce database",mssql:"SQL Server ERRORLOG",inovah:"iNovah log"};
+const ACCEPT={iis:".log,.txt",db:".db,.sqlite,.sqlite3,.db3",mssql:"",inovah:".txt,.log"};
+let MULTIDAY=false;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const num=n=>Number(n).toLocaleString("en-US");
+const TZ={iis:{label:"UTC",shift:0},inovah:{label:"UTC",shift:0},mssql:{label:"server-local",shift:0},db:{label:"UTC",shift:0}};
+let CURTZ=TZ.iis,LAST_RENDER=null,LAST_WARN="";
+let CLIENT_ID="",CLIENT_RAW="",IPF="",IP_RAW="";
+const PICKS=new Map();
+function clientHit(hay){return !CLIENT_ID||(hay&&hay.toLowerCase().indexOf(CLIENT_ID)>=0);}
+function ipHit(ip){return !IPF||(ip&&ip.toLowerCase().indexOf(IPF)>=0);}
+function tzTag(){const sh=CURTZ.shift;return CURTZ.label+(sh?(sh>0?"+":"−")+Math.abs(sh/60)+"h":"");}
+function fmt(d){if(!d)return "—";return new Date(d.getTime()+CURTZ.shift*60000).toISOString().replace("T"," ").replace(/\.\d+Z$/,"")+" "+tzTag();}
+function fmtShort(d){if(!d)return "—";const iso=new Date(d.getTime()+CURTZ.shift*60000).toISOString();return MULTIDAY?iso.slice(5,10)+" "+iso.slice(11,19):iso.slice(11,19);}
+function dur(ms){if(ms==null)return "—";if(ms<1000)return Math.round(ms)+" ms";const s=ms/1000;if(s<90)return s.toFixed(1)+" s";const m=s/60;if(m<90)return m.toFixed(1)+" min";return (m/60).toFixed(1)+" h";}
+function parseTs(s){ if(s==null)return null; if(typeof s==="number"){const d=new Date(s>1e12?s:s*1000);return isNaN(d)?null:d;}
+  const m=String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:[.,](\d+))?/);
+  if(m){const ms=m[7]?Number((m[7]+"000").slice(0,3)):0;const d=new Date(Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6],ms));return isNaN(d)?null:d;}
+  const d=new Date(s);return isNaN(d)?null:d; }
+function cls(s){return Math.floor(s/100);}
+function tallyTop(arr,keyfn,n){const m=new Map();arr.forEach(r=>{const k=keyfn(r);m.set(k,(m.get(k)||0)+1);});return [...m.entries()].sort((a,b)=>b[1]-a[1]).slice(0,n||10);}
+function decodeBytes(u8){
+  if(u8.length>=2&&u8[0]===0xff&&u8[1]===0xfe)return new TextDecoder("utf-16le").decode(u8.subarray(2));
+  if(u8.length>=2&&u8[0]===0xfe&&u8[1]===0xff)return new TextDecoder("utf-16be").decode(u8.subarray(2));
+  if(u8.length>=3&&u8[0]===0xef&&u8[1]===0xbb&&u8[2]===0xbf)return new TextDecoder("utf-8").decode(u8.subarray(3));
+  let nul=0,lim=Math.min(u8.length,600);for(let i=0;i<lim;i++)if(u8[i]===0)nul++;
+  if(nul>lim*0.2)return new TextDecoder("utf-16le").decode(u8);
+  return new TextDecoder("utf-8").decode(u8);
+}
+function humanSize(b){if(b<1024)return b+" B";if(b<1048576)return (b/1024).toFixed(0)+" KB";return (b/1048576).toFixed(1)+" MB";}
+
+/* ============ shared: flow visual ============ */
+const ARROW=`<svg viewBox="0 0 40 26"><line x1="0" y1="13" x2="30" y2="13" stroke="var(--accent)" stroke-width="1.7"/><path d="M30 7 L38 13 L30 19" fill="none" stroke="var(--accent)" stroke-width="1.7"/></svg>`;
+const EXX=`<svg viewBox="0 0 40 26"><line x1="8" y1="5" x2="32" y2="21" stroke="var(--err)" stroke-width="2.4"/><line x1="32" y1="5" x2="8" y2="21" stroke="var(--err)" stroke-width="2.4"/></svg>`;
+const CHECK=`<svg viewBox="0 0 40 26"><path d="M10 14 L17 20 L30 6" fill="none" stroke="var(--ok)" stroke-width="2.4"/></svg>`;
+function box(cls,title,main,lines){return `<div class="fbox ${cls}"><div class="ft">${esc(title)}</div><div class="fmain">${esc(main)}</div>${(lines||[]).filter(Boolean).map(l=>`<div class="fl">${esc(l)}</div>`).join("")}</div>`;}
+function flowHTML(spec){
+  const s=spec.source,r=spec.receiving,e=spec.end;
+  const conn2=spec.failed?EXX:CHECK, endCls=spec.failed?"fail":"good";
+  return box("src",s.t,s.main,s.lines)+`<div class="fconn">${ARROW}</div>`+box("rcv",r.t,r.main,r.lines)+`<div class="fconn">${conn2}</div>`+box(endCls,e.t,e.main,e.lines);
+}
+function renderFlow(spec){$("#flow").innerHTML=flowHTML(spec);$("#flowSub").textContent=spec.caption||"";}
+// Flow block for embedding inside a detail sheet
+function flowBlock(spec){return spec?`<div class="idlbl">Flow</div><div class="flow" style="margin:2px 0 4px">${flowHTML(spec)}</div>`:"";}
+
+/* ============ shared: stats + verdict ============ */
+function renderVerdict(sev,title,bodyHtml){const v=$("#verdict");v.className=`verdict sev-${sev}`;
+  v.innerHTML=`<span class="dot"></span><div><h3>${title}</h3><p>${bodyHtml}</p></div>`;}
+function renderStrip(items){$("#strip").innerHTML=items.map(i=>`<div class="stat ${i.mod||""}"><div class="k">${i.k}</div><div class="v">${i.v}</div></div>`).join("");}
+
+/* ============ shared: timeline canvas ============ */
+let TL=null; // {buckets, series}
+function renderTimeline(buckets, series, subText, title){
+  TL={buckets,series};
+  MULTIDAY=buckets.length>1&&(buckets[buckets.length-1].t-buckets[0].t)>=20*3600000;
+  $("#tlTitle").textContent=title||"Timeline";
+  $("#tlSub").textContent=subText||"";
+  $("#legend").innerHTML=series.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join("");
+  drawTL();
+}
+function drawTL(){
+  if(!TL)return; const {buckets:b,series}=TL;
+  const cv=$("#tl"),tip=$("#tip"),dpr=window.devicePixelRatio||1,W=cv.clientWidth,H=210;
+  cv.width=W*dpr;cv.height=H*dpr;const ctx=cv.getContext("2d");ctx.scale(dpr,dpr);ctx.clearRect(0,0,W,H);
+  if(!b.length){ctx.fillStyle="#5f6c81";ctx.font="13px "+getComputedStyle(document.body).fontFamily;ctx.fillText("No timestamps to plot",12,28);return;}
+  const padL=44,padR=8,padT=12,padB=26,plotW=W-padL-padR,plotH=H-padT-padB;
+  const maxT=Math.max(1,...b.map(x=>x.total)),bw=plotW/b.length;
+  ctx.fillStyle="#5f6c81";ctx.font="11px "+getComputedStyle(document.body).fontFamily;ctx.textAlign="right";ctx.textBaseline="middle";
+  for(let g=0;g<=4;g++){const val=Math.round(maxT*g/4),y=padT+plotH-(g/4)*plotH;ctx.strokeStyle="#212b3d";ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.fillText(num(val),padL-8,y);}
+  b.forEach((x,i)=>{const gap=Math.min(1.5,bw*0.12),bx=padL+i*bw+gap/2,w=bw-gap;let y=padT+plotH;
+    series.forEach(s=>{const h=((x[s.key]||0)/maxT)*plotH;if(h<=0)return;ctx.fillStyle=s.color;ctx.fillRect(bx,y-h,w,h);y-=h;});});
+  ctx.fillStyle="#5f6c81";ctx.textAlign="center";ctx.textBaseline="top";
+  [0,Math.floor(b.length/2),b.length-1].forEach(i=>{ctx.fillText(fmtShort(b[i].t),padL+(i+0.5)*bw,padT+plotH+7);});
+  cv.onmousemove=ev=>{const rect=cv.getBoundingClientRect(),mx=ev.clientX-rect.left,i=Math.floor((mx-padL)/bw);
+    if(i<0||i>=b.length){tip.style.opacity=0;return;}const x=b[i];
+    tip.innerHTML=`<div class="t">${fmtShort(x.t)} · ${num(x.total)}</div>`+series.map(s=>`<div class="r"><span style="color:${s.color}">${esc(s.label)}</span><span>${num(x[s.key]||0)}</span></div>`).join("");
+    tip.style.opacity=1;let tx=padL+(i+0.5)*bw+10;if(tx>W-170)tx=W-170;tip.style.left=tx+"px";tip.style.top="14px";};
+  cv.onmouseleave=()=>tip.style.opacity=0;
+}
+function makeBuckets(withT,keys){ // withT sorted rows with .t; returns {buckets,bucketMs,t0,t1}
+  if(!withT.length)return{buckets:[],bucketMs:60000,t0:null,t1:null};
+  const t0=withT[0].t,t1=withT[withT.length-1].t,span=t1-t0;
+  const bucketMs=Math.max(1000,Math.round(span/48/1000)*1000)||1000;
+  const n=Math.max(1,Math.ceil((span+1)/bucketMs));
+  const buckets=Array.from({length:n},(_,i)=>{const o={t:new Date(+t0+i*bucketMs),total:0};keys.forEach(k=>o[k]=0);return o;});
+  return {buckets,bucketMs,t0,t1,put:(r,key)=>{const bi=Math.min(n-1,Math.floor((r.t-t0)/bucketMs));buckets[bi][key]++;buckets[bi].total++;}};
+}
+
+/* ============ shared overlay ============ */
+function openSheet(html,pickMode,pickItem){$("#sheet").innerHTML=html;$("#overlay").classList.add("on");
+  const c=$("#sheet").querySelector("[data-close]");if(c)c.onclick=closeSheet;
+  const pb=$("#sheet").querySelector("[data-pick]");
+  if(pb&&pickItem){const upd=()=>{const on=PICKS.has(pickKey(pickMode,pickItem));pb.textContent=on?"✓ Added to ticket":"＋ Add to ticket";pb.classList.toggle("primary",!on);};upd();
+    pb.onclick=()=>{togglePick(pickMode,pickItem,!PICKS.has(pickKey(pickMode,pickItem)));upd();document.querySelectorAll(".pick").forEach(cb=>{const g=PICK_ARR[cb.dataset.arr],arr=g&&g();if(arr&&arr[+cb.dataset.i]===pickItem)cb.checked=PICKS.has(pickKey(pickMode,pickItem));});};}
+  $("#sheet").querySelectorAll(".m.clip").forEach(m=>m.onclick=()=>m.classList.remove("clip"));}
+function closeSheet(){$("#overlay").classList.remove("on");}
+$("#overlay").addEventListener("click",e=>{if(e.target===$("#overlay"))closeSheet();});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeSheet();});
+
+/* =====================================================================
+   WHAT TO DO NEXT — plain-language guidance per problem.
+   Each function returns {title, steps:[html], escalate:html} or null.
+   Edit the wording freely; steps are trusted HTML from this file.
+   ===================================================================== */
+function nx(title,steps,escalate){return {title,steps:steps.filter(Boolean),escalate:escalate||""};}
+function whenTxt(t){return t?`<b>${esc(fmt(t))}</b>`:"the same time";}
+function nextIIS(r){if(!r)return null;const st=r.status,sub=r.substatus,k=st+"."+sub;
+  const xref=`Drop the iNovah and SQL Server logs in too and look around ${whenTxt(r.t)} — IIS times are UTC, so use the time adjuster to line them up.`;
+  if(k==="503.0")return nx("The site's app pool is stopped",[
+    "Open <b>IIS Manager → Application Pools</b> and find the pool for this site. If it says <b>Stopped</b>, start it.",
+    "If it stops again on its own: <b>Event Viewer → Windows Logs → System</b>, look for WAS warnings (Event ID 5002 = rapid-fail protection). They name the pool that keeps crashing.",
+    "Also check the HTTPERR log (see <i>Where to find these logs</i>) for the same time.",xref],
+    "the pool stops again after being started, or Event Viewer shows repeated crashes.");
+  if(k==="503.2"||k==="503.3"||k==="500.13")return nx("The server is overloaded / request queue is full",[
+    "On the web server, open <b>Task Manager</b> and check CPU and memory.",
+    "Look at <b>Slowest requests</b> on this report — whatever is slow is usually what's piling up.",
+    "Slow requests are often waiting on SQL: check the SQL Server log for deadlocks, timeouts or log-full errors at the same time.",
+    "Short-term relief: recycle the app pool (users currently signed in may be logged out)."],
+    "it lasts more than ~15 minutes or keeps coming back.");
+  if(st===502&&sub===3||st===504)return nx("The application behind IIS didn't answer in time",[
+    "Check <b>Slowest requests</b> — note which pages time out.",
+    "Make sure the iNovah services this site depends on are running (<b>services.msc</b>) and their app pools are started.",xref],
+    "every request times out, or it continues after services are restarted.");
+  if(k==="502.5"||k==="500.30"||k==="500.31"||k==="500.37")return nx("The application failed to start",[
+    "Open <b>Event Viewer → Windows Logs → Application</b> and look for errors from <i>IIS AspNetCore Module</i> at this time — they say why.",
+    "If this started after Windows updates or an upgrade, confirm the correct <b>.NET Hosting Bundle</b> is installed.",
+    "After fixing, recycle the app pool."],"the Event Viewer message doesn't make the cause clear.");
+  if(k==="500.19")return nx("IIS can't read the site's web.config",[
+    "Was the web.config edited recently? Compare it with a backup copy.",
+    "Browse to the page <b>on the server itself</b> (http://localhost/…) — IIS shows a detailed error with the bad line number there.",
+    "Check that the IIS_IUSRS group can read the site folder."],"you can't identify the change.");
+  if(st===401)return nx("Sign-in / authentication failed",[
+    "If only one user is affected: confirm their username/password and that their account isn't locked.",
+    "If <b>everyone</b> is affected: check the site's <b>Authentication</b> settings in IIS, and whether the app pool's service account password recently expired or changed.",
+    r.cIp?`Client IP for this request: <b>${esc(r.cIp)}</b>.`:""],"all users are affected.");
+  if(k==="403.4")return nx("The site requires HTTPS",["Use the <b>https://</b> address. Update any bookmarks or shortcuts still pointing to http://."]);
+  if(k==="403.6")return nx("The client's IP is blocked",[
+    `In IIS, open the site's <b>IP Address and Domain Restrictions</b> and look for <b>${esc(r.cIp||"the client IP")}</b>.`,
+    "Ask the client whether their IP address recently changed."]);
+  if(st===403)return nx("Access forbidden",[
+    k==="403.14"?"The URL points to a folder with no default page — check the link is complete.":"Check folder permissions and IP restrictions for this site in IIS.",
+    r.cIp?`Client IP: <b>${esc(r.cIp)}</b>.`:""]);
+  if(k==="404.13")return nx("Upload/request was too large",["The site's request size limit (<i>maxAllowedContentLength</i>) was exceeded — usually a large file upload. Try a smaller file or raise the limit."],"the limit needs to change.");
+  if(st===404)return nx("Page not found",[
+    "If the URLs look odd (wp-login, .php, .env) and come from one or two IPs, it's internet scanning — safe to ignore.",
+    "If real users get it: check the link they used, and after an upgrade confirm the site files and bindings are correct."]);
+  if(st>=500)return nx("The application threw an error",[
+    "The real error is usually in the <b>iNovah log</b> — drop it on the iNovah card and look at the same time.",
+    "Also check <b>Event Viewer → Windows Logs → Application</b>.",
+    "Browse to the page on the server itself to see the detailed error.",xref],"it affects multiple users or keeps happening.");
+  if(r.timeTaken>5000)return nx("Slow request",[`This took ${esc(dur(r.timeTaken))}. Check the SQL Server log for blocking, deadlocks or timeouts around ${whenTxt(r.t)}.`],"many requests are this slow.");
+  return null;}
+function nextSQL(e){if(!e)return null;const n=e.number,s=e.state,who=e.user?` <b>${esc(e.user)}</b>`:"",from=e.client?` from <b>${esc(e.client)}</b>`:"";
+  const brute="If the client IP isn't one of your servers or workstations, treat it as a possible attack.";
+  if(n===18456){
+    if([8,9,65].includes(s))return nx("Wrong password for a SQL login",[
+      `Login${who} failed${from} with an incorrect password.`,
+      "Check the connection string / .config on that machine — was the password changed recently?",
+      "Update the app's config, or reset the password in SSMS → <b>Security → Logins</b> (then update every app that uses it).",brute],"the IP is unknown, or failures continue after the fix.");
+    if([2,5].includes(s))return nx("SQL login doesn't exist",[`Login${who}${from} doesn't exist on this server.`,"Check the login name in the connection string for typos.","After a server move or restore, the login may need to be recreated.",brute],"you don't recognise the login or IP.");
+    if(s===7)return nx("SQL login is disabled",[`Login${who} is disabled. In SSMS → Security → Logins → Properties → <b>Status</b>, enable it if it should be in use.`]);
+    if([11,12].includes(s))return nx("Login is valid but has no access",[`Login${who} authenticated but isn't allowed on the server.`,"Check its server permissions, or for a Windows account, its group membership.","After a database restore, the database user may be orphaned and need re-mapping."],"permissions need changing.");
+    if([16,38,40].includes(s))return nx("Login's default database is unavailable",["In SSMS, check that the database is <b>online</b>.",`Or change the login's default database (Login${who} → Properties) to one that exists.`]);
+    if(s===58)return nx("Server only allows Windows logins",["A SQL login was used but the server is set to Windows Authentication only.","In SSMS → server <b>Properties → Security</b>, choose <i>SQL Server and Windows Authentication mode</i>, then restart the SQL service <b>during a maintenance window</b>."],"you're not authorised to restart SQL Server.");
+    if(s===18)return nx("Password must be changed",[`Login${who} must change its password before it can sign in. Reset it in SSMS, then update the app config.`]);
+    return nx("SQL login failed",[`Login${who} failed${from} (state ${s}).`,"Check the credentials in the app's connection string.",brute]);}
+  if(n===1205)return nx("Deadlock",["Two processes blocked each other; SQL cancelled one. An occasional deadlock is normal and the app usually retries.",`Check the iNovah log around ${whenTxt(e.t)} for a failure the user would have seen.`,"If they're frequent, a DBA can pull the deadlock details from the <i>system_health</i> Extended Events session."],"deadlocks are frequent or users are seeing errors.");
+  if(n===9002)return nx("Transaction log is full — writes are failing",[`In SSMS run <code>SELECT name, log_reuse_wait_desc FROM sys.databases</code> to see why${e.db?` for <b>${esc(e.db)}</b>`:""}.`,"If it says <b>LOG_BACKUP</b>: the log-backup job isn't running or is failing — check SQL Agent jobs.","Check free space on the drive holding the .ldf file.","Do <b>not</b> delete or shrink files without a DBA."],"!the database can't accept changes until this is fixed.");
+  if(n===1105)return nx("Database file is full",["Check free disk space on the data drive.","Check the file's autogrowth / maximum size settings in SSMS (Database → Properties → Files)."],"disk space is the problem.");
+  if([823,824,825,605].includes(n))return nx("Disk I/O error or possible corruption",["<b>Escalate now.</b> Don't keep restarting SQL Server.","Check <b>Event Viewer → System</b> for disk/storage errors at the same time.","Confirm recent good backups exist. A DBA should run <code>DBCC CHECKDB</code>."],"!don't wait.");
+  if(n===701||n===8645)return nx("SQL Server is short on memory",["Check memory use on the server (Task Manager).","Check SQL's <i>max server memory</i> setting is sensible for the machine.","Restart SQL only as a last resort, in a maintenance window."],"it repeats.");
+  if([17883,17884,845].includes(n))return nx("SQL Server stalled",["Check CPU and disk activity on the server at that time.","Look in Event Viewer → System for storage or VM host problems."],"!don't wait.");
+  if(n===4060)return nx("Database couldn't be opened",["Check the database name in the connection string.","Confirm the database is online in SSMS and the login is mapped to it."]);
+  if(n===3041)return nx("Backup failed",["Read the next lines in the log for the reason.","Check the backup folder exists, the drive has space, and the SQL service account can write to it."],"tonight's backup will also fail.");
+  if(n===17054)return nx("Windows Application event log is full",["Event Viewer → Windows Logs → <b>Application</b> → Properties: increase the size or choose <i>Overwrite events as needed</i>."]);
+  if(n===18452)return nx("Login from an untrusted domain",["The Windows account isn't trusted by this server (often a local account or another domain). Use a domain account the server trusts, or a SQL login."]);
+  if((n>=41000&&n<42000)||(n>=35200&&n<35300)||(n>=19400&&n<19500))return nx("Always On / cluster problem",["Open <b>Failover Cluster Manager</b> and check that all nodes and the cluster service are up.","Check the availability group's health in SSMS."],"databases are offline.");
+  if(e.severity>=20)return nx("Fatal SQL Server error",["Use <b>Add to ticket</b> to capture the details.","Check Event Viewer → System and Application for the same time."],"!don't wait.");
+  if(e.severity>=17)return nx("SQL Server resource error",["Read the detail line — it names the resource (disk, memory, locks).","Check disk space and memory on the server."],"it repeats.");
+  if(e.severity>=11)return nx("Query error",["This is usually caused by what the application sent. Check the iNovah log at "+whenTxt(e.t)+" for the matching failure."]);
+  return null;}
+function nextINV(e){if(!e)return null;const t=((e.exType||"")+" "+(e.exMessage||"")+" "+(e.message||"")).toLowerCase();
+  const q=(e.exMessage||e.message||"").match(/"([^"]+)"/),key=q?q[1]:"";const m=(INOVAH.A&&INOVAH.A.head&&INOVAH.A.head.machine)||"this server";
+  const xIIS=`Check the IIS log for 500 errors at ${whenTxt(e.t)} to see which users/pages were affected.`;
+  if(/configurationexception|invalid url|unable to connect to the remote server/.test(t))return nx("iNovah can't reach a configured address",[
+    key?`Find <b>${esc(key)}</b> in the iNovah .config file on <b>${esc(m)}</b> (web.config for web apps, or the service's .config).`:`Check the URLs/addresses in the iNovah .config files on <b>${esc(m)}</b>.`,
+    "Paste that URL into a browser <b>on this server</b>. If it doesn't load: is the target service / app pool running? Does the name resolve? Is a firewall or expired certificate in the way?",
+    "After fixing, recycle the app pool — iNovah reads config only at startup."],"the URL is correct and loads, but the error continues.");
+  if(/login failed/.test(t))return nx("iNovah's SQL login failed",["Check the database credentials in the iNovah .config connection string.","Drop the SQL Server log on the SQL card — Error 18456 at the same time tells you exactly why (wrong password, missing login…)."]);
+  if(/network-related|instance-specific|server was not found|error: 40|error: 26/.test(t))return nx("iNovah can't reach SQL Server",["Is the <b>SQL Server</b> service running on the database server?","Check the server/instance name in the iNovah .config connection string.","Named instances also need the <i>SQL Server Browser</i> service; check firewall rules."],"SQL is running and the name is correct.");
+  if(/sqlexception/.test(t)&&/timeout/.test(t))return nx("Database query timed out",[`Drop the SQL Server log on the SQL card and look around ${whenTxt(e.t)} for deadlocks, log-full or I/O errors.`,"Check for blocking (SSMS → Activity Monitor) while the problem is happening.","If only one report or screen is affected, note exactly what the user was doing."],"it affects many users or keeps happening.");
+  if(/trust relationship|ssl|tls|certificate/.test(t))return nx("Certificate / secure connection problem",["Open the target address in a browser and check the padlock: is the certificate expired or for a different name?","Make sure TLS 1.2 is enabled on both ends."],"a certificate needs replacing.");
+  if(/access to the path|unauthorizedaccess|access is denied/.test(t))return nx("Permission denied",["The account running iNovah (the app pool or service identity) can't access the file or folder named in the message.","Grant it the needed permission on that folder."]);
+  if(/timeoutexception|timed out|webexception/.test(t))return nx("A remote service didn't respond",["Check the service named in the message is running and reachable from this server.",xIIS],"it continues.");
+  if(/outofmemory/.test(t))return nx("Out of memory",["Check memory on the server and recycle the iNovah app pool."],"it repeats.");
+  if(/session timeout/.test(t))return nx("Configuration warning",["Adjust the setting named in the message in the iNovah configuration if users are being logged out too quickly."]);
+  if(sevL(e.level)>=4)return nx("Application error",["Use <b>Add to ticket</b> — it includes the full exception and stack trace.","Did this start after an upgrade, config change or Windows update? Note the first time it appears.",xIIS],"it's affecting users and the cause isn't clear from the message.");
+  return null;}
+function nextDB(n){if(!n)return null;const errE=n.entries.find(e=>sevL(e.level)>=4)||n.last||{msg:""};const t=(errE.msg||"").toLowerCase();
+  const id=`RequestId <b>${esc(n.id)}</b>`,url=(errE.msg||"").match(/https?:\/\/[^\s"']+/);
+  if(/database is locked/.test(t))return nx("The log database was locked",["Another program had the .db file open — most often <b>DB Browser for SQLite</b> left open on the server. Close it.","Never open the live .db; copy it first.","Check disk space and that antivirus excludes the App_Data / System Logs folders."],"it happens with nothing else open.");
+  if(/refused|unreachable|timed out|timeout|no such host|name could not be resolved/.test(t))return nx("The client's endpoint didn't answer",[
+    url?`From the <b>DMZ web server</b>, open <b>${esc(url[0])}</b> in a browser.`:"From the <b>DMZ web server</b>, browse to the client's notification URL.",
+    "If it doesn't load, contact the client with the "+id+" and time — their endpoint may be down.",
+    "If it loads from elsewhere but not from the DMZ, check outbound firewall/proxy rules.",
+    "Once fixed, the notification may need to be re-sent."],"<b>all</b> notifications to <b>all</b> clients are failing — the problem is on our side.");
+  if(/\b40[13]\b|unauthori[sz]ed|forbidden/.test(t))return nx("The client's endpoint rejected our credentials",["Compare the credentials/API key for this client in the eCommerce Configuration Portal with what the client expects.","Share the "+id+" and time with the client."]);
+  if(/ssl|tls|certificate|trust relationship/.test(t))return nx("Certificate / secure connection problem",["Check the client's certificate (expired? wrong name?) by browsing to their URL from the DMZ server.","Make sure TLS 1.2 is enabled on the DMZ server."]);
+  if(/\b50[0-4]\b/.test(t))return nx("The client's server returned an error",["The problem is on the client's side. Send them the "+id+", time and error message (use <b>Add to ticket</b>)."]);
+  if(n.status==="Incomplete")return nx("Notification never finished",["Open the other eCommerce .db files for the same day (Processing, Notification Mover) and search for the "+id+".","Check the eCommerce services are running (<b>services.msc</b>) on the app server and DMZ.","If many are incomplete at the end of the log, the service may have stopped part-way."],"the services are running but notifications still stall.");
+  if(n.status==="Failed")return nx("Notification failed",["Open it to read the full error, then use <b>Add to ticket</b>.","Search other eCommerce .db files for the same day for this "+id+"."]);
+  return null;}
+function pageNext(){const m=CUR_MODE;
+  if(m==="iis"){const a=IIS.A,c=a.codes.find(c=>c.status>=500)||a.codes[0];if(!c)return null;
+    return nextIIS(a.failures.find(r=>r.status===c.status&&r.substatus===c.sub)||{status:c.status,substatus:c.sub});}
+  if(m==="mssql"){const a=MSSQL.A;let e=a.severe[0];
+    if(!e&&a.logins.length>=5){const st=a.loginByState[0]&&a.loginByState[0][0];e=a.logins.find(x=>String(x.state)===st);}
+    e=e||a.events.find(x=>x.number===1205)||a.events.find(x=>x.severity>=11);return nextSQL(e);}
+  if(m==="inovah"){const a=INOVAH.A,g=a.groups.find(g=>sevL(g.level)>=4)||a.groups[0];return g?nextINV(g.sample):null;}
+  if(m==="db"){const a=DB.A;return nextDB(a.notifs.find(n=>n.status==="Failed")||a.notifs.find(n=>n.status==="Incomplete"));}
+  return null;}
+function nextInner(spec){return `<ol>${spec.steps.map(s=>`<li>${s}</li>`).join("")}</ol>`+(spec.escalate?`<div class="esc">${spec.escalate[0]==="!"?"<b>Escalate right away</b> — "+spec.escalate.slice(1):"<b>Escalate if</b> "+spec.escalate}</div>`:"");}
+function renderNext(spec){const el=$("#nextSteps");if(!spec){el.innerHTML="";el.className="hidden";return;}
+  el.className="next";el.innerHTML=`<div class="nh">What to do next <span class="nt">· ${esc(spec.title)}</span></div>${nextInner(spec)}<div class="nfoot">Based on the main problem above. Click any row for steps specific to that item.</div>`;}
+function nextBlock(spec){return spec?`<div class="idlbl">What to do next · ${esc(spec.title)}</div><div class="next insheet">${nextInner(spec)}</div>`:"";}
+function nextFor(mode,it){return mode==="iis"?nextIIS(it):mode==="mssql"?nextSQL(it):mode==="inovah"?nextINV(it):nextDB(it);}
+function nextText(spec){if(!spec)return "";const d=document.createElement("div");const strip=h=>{d.innerHTML=h;return d.textContent.trim();};
+  return `\n    Next steps (${spec.title}):\n`+spec.steps.map((s,i)=>`      ${i+1}. ${strip(s)}`).join("\n")+(spec.escalate?`\n      ${spec.escalate[0]==="!"?"Escalate right away — "+strip(spec.escalate.slice(1)):"Escalate if "+strip(spec.escalate)}`:"");}
+
+/* ===================== SQLite reader ===================== */
+function openSQLite(buf){
+  const u8=buf instanceof Uint8Array?buf:new Uint8Array(buf);
+  if(u8.length<100||String.fromCharCode.apply(null,u8.slice(0,15))!=="SQLite format 3")throw new Error("Not a SQLite database file.");
+  const dv=new DataView(u8.buffer,u8.byteOffset,u8.byteLength);
+  let pageSize=dv.getUint16(16);if(pageSize===1)pageSize=65536;
+  const reserved=u8[20],wal=(u8[18]===2||u8[19]===2),encVal=dv.getUint32(56)||1;
+  const decoder=new TextDecoder(encVal===2?"utf-16le":encVal===3?"utf-16be":"utf-8"),U=pageSize-reserved;
+  function readVarint(off){let v=0,i=0;for(;i<8;i++){const b=u8[off+i];v=v*128+(b&0x7f);if(!(b&0x80))return[v,i+1];}v=v*256+u8[off+8];return[v,9];}
+  function readPayload(off,P){let X=U-35,local;if(P<=X)local=P;else{const M=Math.floor((U-12)*32/255)-23;const K=M+((P-M)%(U-4));local=(K<=X)?K:M;}
+    const out=new Uint8Array(P);out.set(u8.subarray(off,off+local),0);let filled=local;
+    if(local<P){let ovf=dv.getUint32(off+local),g=0;while(ovf!==0&&filled<P&&g++<200000){const po=(ovf-1)*pageSize;const nxt=dv.getUint32(po);const ch=Math.min(U-4,P-filled);out.set(u8.subarray(po+4,po+4+ch),filled);filled+=ch;ovf=nxt;}}
+    return out;}
+  function rv(b,o){let v=0,i=0;for(;i<8;i++){const x=b[o+i];v=v*128+(x&0x7f);if(!(x&0x80))return[v,i+1];}v=v*256+b[o+8];return[v,9];}
+  function sInt(b,o,len){let v=0;for(let i=0;i<len;i++)v=v*256+b[o+i];const bits=len*8;if(v>=2**(bits-1))v-=2**bits;return v;}
+  function decodeRecord(b){const [hl,hb]=rv(b,0);let p=hb;const S=[];while(p<hl){const [s,n]=rv(b,p);S.push(s);p+=n;}let body=hl;const vals=[];
+    for(const s of S){if(s===0)vals.push(null);else if(s===1){vals.push(sInt(b,body,1));body+=1;}else if(s===2){vals.push(sInt(b,body,2));body+=2;}
+      else if(s===3){vals.push(sInt(b,body,3));body+=3;}else if(s===4){vals.push(sInt(b,body,4));body+=4;}else if(s===5){vals.push(sInt(b,body,6));body+=6;}
+      else if(s===6){vals.push(sInt(b,body,8));body+=8;}else if(s===7){vals.push(new DataView(b.buffer,b.byteOffset).getFloat64(body));body+=8;}
+      else if(s===8)vals.push(0);else if(s===9)vals.push(1);
+      else if(s>=12&&s%2===0){const len=(s-12)/2;vals.push(b.subarray(body,body+len));body+=len;}
+      else{const len=(s-13)/2;vals.push(decoder.decode(b.subarray(body,body+len)));body+=len;}}
+    return vals;}
+  function readTable(root){const rows=[],vis=new Set();(function walk(pn){if(vis.has(pn)||pn<1)return;vis.add(pn);
+    const base=(pn-1)*pageSize,hdr=pn===1?100:0,type=u8[base+hdr],nC=dv.getUint16(base+hdr+3),cpB=base+hdr+((type===0x05||type===0x02)?12:8);
+    if(type===0x0d){for(let i=0;i<nC;i++){const cp=base+dv.getUint16(cpB+i*2);let o=cp;const [P,a]=readVarint(o);o+=a;const [rid,b]=readVarint(o);o+=b;rows.push({rowid:rid,values:decodeRecord(readPayload(o,P))});}}
+    else if(type===0x05){for(let i=0;i<nC;i++){const cp=base+dv.getUint16(cpB+i*2);walk(dv.getUint32(cp));}walk(dv.getUint32(base+hdr+8));}
+  })(root);return rows;}
+  function splitTop(s){const o=[];let d=0,c="";for(const ch of s){if(ch==="(")d++;else if(ch===")")d--;if(ch===","&&d===0){o.push(c);c="";}else c+=ch;}if(c.trim())o.push(c);return o;}
+  function parseCols(sql){if(!sql)return{cols:[],pk:-1};const m=sql.match(/\(([\s\S]*)\)[^)]*$/);if(!m)return{cols:[],pk:-1};
+    const parts=splitTop(m[1]),cols=[];let pk=-1;for(let p of parts){p=p.trim();if(!p)continue;if(/^(PRIMARY|UNIQUE|CHECK|FOREIGN|CONSTRAINT)\b/i.test(p))continue;
+      const nm=p.match(/^\s*(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|(\w+))/);if(!nm)continue;const name=nm[1]||nm[2]||nm[3]||nm[4];if(/\bINTEGER\s+PRIMARY\s+KEY\b/i.test(p))pk=cols.length;cols.push(name);}
+    return{cols,pk};}
+  const schema=readTable(1).map(r=>r.values);
+  const tables=schema.filter(v=>v[0]==="table"&&v[1]&&!String(v[1]).startsWith("sqlite_")).map(v=>{const pc=parseCols(v[4]);return{name:v[1],rootpage:v[3],sql:v[4],columns:pc.cols,pk:pc.pk};});
+  function rowsAsObjects(t){return readTable(t.rootpage).map(r=>{const o={__rowid:r.rowid};t.columns.forEach((c,i)=>{let val=r.values[i]!==undefined?r.values[i]:null;if(val===null&&i===t.pk)val=r.rowid;o[c]=val;});return o;});}
+  return{pageSize,encoding:encVal,wal,tables,rowsAsObjects};
+}
+
+/* ===================== IIS analyzer ===================== */
+const IIS_SUB={"400.0":"Bad request — malformed HTTP.","401.3":"Access denied by NTFS ACL.","403.4":"SSL required — request came over HTTP.","403.6":"Client IP on a deny list.","403.14":"Directory listing denied.","404.0":"Resource not found.","404.4":"No handler configured.","404.13":"Request body exceeds max length.","500.0":"Unhandled app/module error.","500.13":"Server too busy.","500.19":"Bad config data (web.config).","500.30":"ASP.NET Core app failed to start.","500.31":"ANCM failed to load the .NET runtime.","500.37":"ANCM startup timed out.","502.3":"Bad gateway — timeout forwarding to app.","502.5":"ANCM process failed to start.","503.0":"Service unavailable — app pool stopped.","503.2":"Concurrent request limit exceeded.","503.3":"ASP.NET request queue full."};
+function iisCause(st,sub){const k=st+"."+sub;if(IIS_SUB[k])return IIS_SUB[k];const g={400:"Bad request.",401:"Unauthorized.",403:"Forbidden.",404:"Not found.",408:"Request timeout.",429:"Throttled.",500:"Internal server error.",502:"Bad gateway — upstream not responding.",503:"Service unavailable.",504:"Gateway timeout."};return g[st]||"—";}
+function pillS(st){return `<span class="pill s${cls(st)}">${st}</span>`;}
+const IIS={rows:[],A:null};
+function iisParse(text){
+  const lines=text.split(/\r?\n/);let fields=null,idx={},recs=[];
+  const reindex=fs=>{idx={};fs.forEach((f,i)=>idx[f.toLowerCase()]=i);};
+  for(let line of lines){if(!line)continue;
+    if(line[0]==="#"){const low=line.toLowerCase();if(low.startsWith("#fields:")){fields=line.slice(8).trim().split(/\s+/);reindex(fields);}continue;}
+    if(!fields){fields="date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken".split(" ");reindex(fields);}
+    const p=line.split(/\s+/);if(p.length<fields.length-2)continue;
+    const get=n=>{const i=idx[n];if(i==null)return "";const v=p[i];return (v==="-"||v==null)?"":v;};
+    const st=parseInt(get("sc-status"))||0;if(!st)continue;
+    if(CLIENT_ID&&!clientHit(get("cs-uri-stem")+" "+get("cs-uri-query")))continue;
+    if(IPF&&!ipHit(get("c-ip")))continue;
+    const date=get("date"),time=get("time");let t=null;if(date&&time){const d=new Date(date+"T"+time+"Z");if(!isNaN(d))t=d;}
+    recs.push({t,cIp:get("c-ip"),sIp:get("s-ip"),host:get("cs-host"),method:get("cs-method"),uri:get("cs-uri-stem"),query:get("cs-uri-query"),
+      status:st,substatus:parseInt(get("sc-substatus"))||0,win32:parseInt(get("sc-win32-status"))||0,timeTaken:parseInt(get("time-taken"))||0,ua:get("cs(user-agent)")});
+  }
+  return recs;
+}
+function iisAnalyze(recs){
+  const withT=recs.filter(r=>r.t).sort((a,b)=>a.t-b.t);
+  const counts={2:0,3:0,4:0,5:0};recs.forEach(r=>{const c=cls(r.status);if(counts[c]!=null)counts[c]++;});
+  const failures=recs.filter(r=>cls(r.status)>=4),server=recs.filter(r=>cls(r.status)===5);
+  const mb=makeBuckets(withT,["c2","c3","c4","c5"]);
+  withT.forEach(r=>{const c=cls(r.status);mb.put(r,c===2?"c2":c===3?"c3":c===4?"c4":"c5");});
+  let incident=null;const b=mb.buckets;let peak=-1,pv=0;b.forEach((x,i)=>{if(x.c5>pv){pv=x.c5;peak=i;}});
+  if(pv>0){let a=peak,z=peak;const bad=x=>x>=0&&x<b.length&&b[x].c5>0&&b[x].c5>=b[x].c2*0.5;while(bad(a-1))a--;while(bad(z+1))z++;
+    incident={from:b[a].t,to:new Date(+b[z].t+mb.bucketMs),count:0};for(let i=a;i<=z;i++)incident.count+=b[i].c5;}
+  const codeMap=new Map();failures.forEach(r=>{const k=r.status+"."+r.substatus;const e=codeMap.get(k)||{status:r.status,sub:r.substatus,n:0};e.n++;codeMap.set(k,e);});
+  const codes=[...codeMap.values()].sort((a,b)=>b.n-a.n);
+  const failUrls=tallyTop(failures,r=>r.method+" "+r.uri,10),failIps=tallyTop(failures,r=>r.cIp,10);
+  const slow=[...recs].sort((a,b)=>b.timeTaken-a.timeTaken).slice(0,10);
+  return{recs,total:recs.length,withT,counts,failures,server,buckets:mb.buckets,bucketMs:mb.bucketMs,t0:mb.t0,t1:mb.t1,incident,codes,failUrls,failIps,slow,
+    totalIps:new Set(recs.map(r=>r.cIp)).size};
+}
+let IIS_RECFILTER="all";
+function iisRender(meta){CURTZ=TZ.iis;LAST_RENDER=()=>iisRender(meta);updateTzControl();
+  const a=IIS.A;setBrand("IIS web logs","W3C request log analysis");fileMeta(meta.name,meta.size,num(a.total!=null?a.total:a.recs.length)+" requests");
+  warn(meta.warn);
+  const total=a.total!=null?a.total:a.recs.length,srv=a.counts[5],cli=a.counts[4],srvPct=total?srv/total*100:0;
+  let sev,title,body;
+  if(a.incident&&srv>0){sev="crit";const tc=a.codes.find(c=>c.status>=500)||a.codes[0];title=`Server-error incident — ${num(a.incident.count)} × 5xx`;
+    body=`Burst from <span class="win">${fmt(a.incident.from)}</span> to <span class="win">${fmt(a.incident.to)}</span>. Dominant <b>${tc.status}.${tc.sub}</b> — ${esc(iisCause(tc.status,tc.sub))}`;}
+  else if(srvPct>=1){sev="crit";title=`Elevated server errors — ${srvPct.toFixed(1)}% 5xx`;body=`${num(srv)} server errors without a single tight window — see top failing URLs.`;}
+  else if(cli/(total||1)>0.15){sev="warn";title=`High client-error rate — ${(cli/total*100).toFixed(1)}% 4xx`;body=`Mostly client-side (auth, missing routes, blocked IPs). Server looks healthy.`;}
+  else{sev="ok";title="No server-error incident found";body=`${num(srv)} server and ${num(cli)} client errors over ${num(total)} requests.`;}
+  renderVerdict(sev,title,body);renderNext(sev==="ok"?null:pageNext());
+  renderStrip([{k:"Requests",v:num(total)},{k:"Time span",v:a.t0?dur(a.t1-a.t0):"—"},{k:"2xx",v:num(a.counts[2]),mod:"ok"},
+    {k:"4xx client",v:num(cli),mod:cli?"warn":""},{k:"5xx server",v:num(srv),mod:srv?"err":""},{k:"Unique IPs",v:num(a.totalIps)+(a.ipCapped?"+":"")}]);
+  renderTimeline(a.buckets,[{key:"c2",color:"var(--ok)",label:"2xx"},{key:"c3",color:"#6b7a99",label:"3xx"},{key:"c4",color:"var(--warn)",label:"4xx"},{key:"c5",color:"var(--err)",label:"5xx"}],
+    a.t0?`${fmt(a.t0)} → ${fmt(a.t1)} · bucket ${dur(a.bucketMs)}`:"no timestamps","Request timeline");
+  iisFlowFrom(a.failures[0]||a.recs[0]);
+  const codesHtml=a.codes.length?`<table><thead><tr><th>Code</th><th class="num">Count</th><th>Likely cause</th></tr></thead><tbody>${a.codes.slice(0,12).map(c=>{const mx=a.codes[0].n;const cc=cls(c.status);return `<tr><td>${pillS(c.status)} <span class="mono muted">.${c.sub}</span></td><td class="num">${num(c.n)}</td><td style="width:46%"><div class="bar"><i style="width:${(c.n/mx*100).toFixed(1)}%;background:var(--${cc===5?'err':cc===4?'warn':'ok'})"></i></div><div class="cause">${esc(iisCause(c.status,c.sub))}</div></td></tr>`;}).join("")}</tbody></table>`:`<div class="empty">No 4xx/5xx responses.</div>`;
+  const barT=(entries,kind)=>{if(!entries.length)return `<div class="empty">Nothing to show.</div>`;const mx=entries[0][1];return `<table><tbody>${entries.map(([k,n])=>`<tr><td>${kind==="url"?`<span class="path">${esc(k)}</span>`:`<span class="mono">${esc(k||"(unknown)")}</span>`}</td><td class="num">${num(n)}</td><td style="width:34%"><div class="bar"><i style="width:${(n/mx*100).toFixed(1)}%;background:var(--err)"></i></div></td></tr>`).join("")}</tbody></table>`;};
+  const ipNote=a.failIps.length?`<div class="cause" style="margin-bottom:10px">${a.failIps.length===1?"All errors trace to a <b>single client</b>.":`Errors span <b>${a.failIps.length}${a.failIps.length>=10?"+":""} clients</b> — ${a.failIps.length>3?"broad impact, points at the server.":"a few clients."}`}</div>`:"";
+  const slowHtml=(a.slow.length&&a.slow[0].timeTaken>0)?`<table><thead><tr><th class="pickcell"></th><th class="num">Time</th><th>Status</th><th>Request</th><th>At</th><th>Client</th></tr></thead><tbody>${a.slow.filter(r=>r.timeTaken>0).map(r=>`<tr class="clickrow" data-slow="${a.slow.indexOf(r)}">${pickCell("iis",r,a.slow.indexOf(r),"iisslow")}<td class="num">${num(r.timeTaken)} ms</td><td>${pillS(r.status)}</td><td><span class="mono muted">${esc(r.method)}</span> <span class="path">${esc(r.uri)}</span></td><td class="mono muted">${fmtShort(r.t)}</td><td class="mono muted">${esc(r.cIp)}</td></tr>`).join("")}</tbody></table>`:`<div class="empty">No time-taken data.</div>`;
+  $("#modeBody").innerHTML=`
+    <section><div class="h"><h2>What's failing</h2><span class="sub">status &amp; substatus decoded</span></div><div class="card">${codesHtml}</div></section>
+    <div class="cols">
+      <section><div class="h"><h2>Top failing URLs</h2><span class="sub">4xx / 5xx</span></div><div class="card">${barT(a.failUrls,"url")}</div></section>
+      <section><div class="h"><h2>Who's affected</h2><span class="sub">client IPs by error count</span></div><div class="card">${ipNote}${barT(a.failIps,"ip")}</div></section>
+    </div>
+    <section><div class="h"><h2>Slowest requests</h2><span class="sub">by time-taken · select any to add to a ticket</span></div><div class="card" id="iisSlow">${slowHtml}</div></section>
+    <section><div class="h"><h2>Failure records</h2><span class="sub" id="iisRecSub"></span></div><div class="card"><div class="filterbar" id="iisFilter"></div><div id="iisRecords"></div></div></section>`;
+  iisFilters();iisRecords();
+  $("#iisSlow").querySelectorAll(".clickrow").forEach(row=>row.onclick=()=>{const r=a.slow[+row.dataset.slow];iisOpen(r,iisFlowFrom(r));});wirePicks("#iisSlow");
+  foot(`Parsed ${num(total)} records · IIS W3C extended`);
+}
+function iisFlowSpec(r){if(!r)return null;const failed=cls(r.status)>=4;
+  return {caption:`${r.method||""} ${r.uri||""} — click a failure record to inspect another`,failed,
+    source:{t:"Source — client",main:r.cIp||"(unknown)",lines:[r.ua?("UA "+r.ua.slice(0,42)):"",r.t?fmtShort(r.t):""]},
+    receiving:{t:"Receiving — IIS",main:r.sIp||"web server",lines:[`${r.method||""} ${r.uri||""}`.trim(),r.query?("?"+r.query).slice(0,46):""]},
+    end:{t:failed?"Failure":"Result",main:failed?`${r.status}.${r.substatus}`:`${r.status} OK`,lines:[failed?iisCause(r.status,r.substatus):"request served",r.timeTaken?dur(r.timeTaken):""]}};
+}
+function iisFlowFrom(r){const spec=iisFlowSpec(r);if(spec)renderFlow(spec);return spec;}
+function iisOpen(r,spec){const block=(label,html)=>html?`<div class="idlbl">${esc(label)}</div><div class="idval">${html}</div>`:"";
+  openSheet(`<div class="sh"><h3>${pillS(r.status)} <span class="mono muted">.${r.substatus}</span> &nbsp; ${esc(r.method)} ${esc(r.uri)}</h3><div class="sheetadd" style="display:flex;gap:8px"><button class="btn sm" data-pick>＋ Add to ticket</button><button class="btn sm" data-close>Close</button></div></div>
+    <div class="subttl">${fmt(r.t)} &nbsp;·&nbsp; client ${esc(r.cIp)} &nbsp;·&nbsp; ${r.timeTaken?dur(r.timeTaken):"—"}</div>
+    ${flowBlock(spec)}${nextBlock(nextFor("iis",r))}
+    ${block("Likely cause", esc(iisCause(r.status,r.substatus)))}
+    ${block("Request", `${esc(r.method)} ${esc(r.uri)}${r.query?esc("?"+r.query):""}`)}
+    ${block("Client → server", `${esc(r.cIp)} → ${esc(r.sIp||"—")}`)}
+    ${block("Details", `status ${r.status}.${r.substatus}${r.win32?` · win32 ${r.win32}`:""}${r.timeTaken?` · ${num(r.timeTaken)} ms`:""}`)}
+    ${r.ua?block("User agent", esc(r.ua)):""}`,"iis",r);}
+function iisFilters(){const a=IIS.A;const opts=[["all","All failures"]];if(a.counts[5])opts.push(["5","5xx only"]);if(a.counts[4])opts.push(["4","4xx only"]);if(a.incident)opts.push(["inc","In incident window"]);
+  $("#iisFilter").innerHTML=`<span class="lbl">Show:</span>`+opts.map(([v,l])=>`<span class="chip ${v===IIS_RECFILTER?'on':''}" data-f="${v}">${l}</span>`).join("");
+  $("#iisFilter").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{IIS_RECFILTER=c.dataset.f;iisFilters();iisRecords();});}
+function iisRecords(){const a=IIS.A;let rows=a.failures;if(IIS_RECFILTER==="5")rows=rows.filter(r=>cls(r.status)===5);else if(IIS_RECFILTER==="4")rows=rows.filter(r=>cls(r.status)===4);else if(IIS_RECFILTER==="inc"&&a.incident)rows=rows.filter(r=>r.t&&r.t>=a.incident.from&&r.t<a.incident.to);
+  const shown=rows.slice(0,200);$("#iisRecSub").textContent=`${num(rows.length)} matching · showing ${num(shown.length)}`;
+  if(!shown.length){$("#iisRecords").innerHTML=`<div class="empty">No records match.</div>`;return;}
+  $("#iisRecords").innerHTML=`<table><thead><tr><th class="pickcell"></th><th>Time</th><th>Code</th><th>Request &amp; cause</th><th>Client</th><th class="num">ms</th></tr></thead><tbody>${shown.map((r,i)=>`<tr class="clickrow" data-idx="${a.failures.indexOf(r)}">${pickCell("iis",r,a.failures.indexOf(r))}<td class="mono muted" style="white-space:nowrap">${fmtShort(r.t)}</td><td>${pillS(r.status)}<span class="mono muted">.${r.substatus}</span></td><td><span class="mono muted">${esc(r.method)}</span> <span class="path">${esc(r.uri)}${r.query?esc("?"+r.query):""}</span><div class="cause">${esc(iisCause(r.status,r.substatus))}${r.win32?` · win32 ${r.win32}`:""}</div></td><td class="mono muted" style="white-space:nowrap">${esc(r.cIp)}</td><td class="num muted">${r.timeTaken?num(r.timeTaken):"—"}</td></tr>`).join("")}</tbody></table>`;
+  $("#iisRecords").querySelectorAll(".clickrow").forEach(row=>row.onclick=()=>{const r=a.failures[+row.dataset.idx];iisOpen(r,iisFlowFrom(r));});wirePicks("#iisRecords");}
+
+/* ===================== Notification DB analyzer ===================== */
+const LEVELS={Trace:0,Debug:1,Info:2,Information:2,Warn:3,Warning:3,Error:4,Fatal:5,Critical:5};
+function normLevel(l){l=String(l||"").trim();if(LEVELS[l]!=null)return l==="Information"?"Info":l==="Warning"?"Warn":l==="Critical"?"Fatal":l;const low=l.toLowerCase();for(const k in LEVELS)if(k.toLowerCase()===low)return normLevel(k);return l||"Info";}
+function sevL(l){return LEVELS[l]!=null?LEVELS[l]:2;}
+const DB={db:null,table:null,rows:[],map:{},A:null};
+let NOTIF_FILTER="prob",NOTIF_SEARCH="";
+function dbDetect(cols,res){for(const c of cols)for(const rx of res)if(rx.test(c))return c;return "";}
+function dbBuildMapping(){const cols=DB.table.columns;
+  DB.map={rid:dbDetect(cols,[/request.?id/i,/correlation.?id/i,/event.?id/i,/notif.*id/i,/trace.?id/i]),ts:dbDetect(cols,[/time.?stamp/i,/^time$/i,/^date/i,/created/i,/logged/i,/when/i]),lvl:dbDetect(cols,[/log.?level/i,/^level$/i,/severity/i]),msg:dbDetect(cols,[/message/i,/^msg$/i,/text/i,/detail/i,/body/i]),logger:dbDetect(cols,[/logger/i,/category/i,/source/i,/^class$/i]),callsite:dbDetect(cols,[/callsite/i,/method/i,/member/i,/function/i])};
+  const sel=(key,label)=>{const opts=['<option value="">—</option>'].concat(cols.map(c=>`<option value="${esc(c)}" ${DB.map[key]===c?"selected":""}>${esc(c)}</option>`)).join("");return `<label>${label}<select data-map="${key}">${opts}</select></label>`;};
+  let tp="";if(DB.db.tables.length>1){tp=`<label>Table<select id="tablePick">${DB.db.tables.map(t=>`<option value="${esc(t.name)}" ${t.name===DB.table.name?"selected":""}>${esc(t.name)} (${t.columns.length})</option>`).join("")}</select></label>`;}
+  $("#cfg").innerHTML=`<section><div class="card"><div class="mapping">${tp}${sel("rid","Notification ID")}${sel("ts","Timestamp")}${sel("lvl","Level")}${sel("msg","Message")}${sel("logger","Logger")}${sel("callsite","Callsite")}</div>
+    <div class="markrow">
+      <div><label>Completion markers — reaching one counts as delivered</label><input class="markin" id="okMarks" value="delivered,sent,acknowledged,confirmed,success,completed,processed,http 200,200 ok"></div>
+      <div><label>Failure markers — any of these flags the notification as failed</label><input class="markin" id="failMarks" value="error,fail,failed,exception,timeout,timed out,refused,unable,rejected,invalid,could not,denied,locked,unreachable"></div>
+    </div></div></section>`;
+  $("#cfg").querySelectorAll("select[data-map]").forEach(s=>s.onchange=()=>{DB.map[s.dataset.map]=s.value;dbAnalyze();});
+  const t=$("#tablePick");if(t)t.onchange=()=>{DB.table=DB.db.tables.find(x=>x.name===t.value);DB.rows=DB.db.rowsAsObjects(DB.table);dbBuildMapping();dbAnalyze();};
+  $("#okMarks").oninput=()=>dbAnalyze();$("#failMarks").oninput=()=>dbAnalyze();
+}
+function markerList(id){return ($(id)?.value||"").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean);}
+function dbAnalyze(){
+  const okM=markerList("#okMarks"),failM=markerList("#failMarks"),m=DB.map;
+  const recs=DB.rows.map(r=>({rid:m.rid?String(r[m.rid]??""):"",t:m.ts?parseTs(r[m.ts]):null,level:normLevel(m.lvl?r[m.lvl]:"Info"),msg:m.msg?String(r[m.msg]??""):"",logger:m.logger?String(r[m.logger]??""):"",callsite:m.callsite?String(r[m.callsite]??""):""})).filter(r=>clientHit(r.rid+" "+r.msg+" "+r.logger+" "+r.callsite));
+  const withT=recs.filter(r=>r.t).sort((a,b)=>a.t-b.t);
+  const groups=new Map();recs.forEach(r=>{const k=r.rid||"(no id)";if(!groups.has(k))groups.set(k,[]);groups.get(k).push(r);});
+  const hit=(t,ms)=>{const l=t.toLowerCase();return ms.some(x=>l.includes(x));};
+  const notifs=[];groups.forEach((es,k)=>{es.sort((a,b)=>(a.t&&b.t)?a.t-b.t:0);let worst="Trace";es.forEach(e=>{if(sevL(e.level)>sevL(worst))worst=e.level;});
+    const failed=sevL(worst)>=4||es.some(e=>hit(e.msg,failM)),done=es.some(e=>hit(e.msg,okM));
+    const status=failed?"Failed":done?"OK":"Incomplete";const start=es.find(e=>e.t)?.t||null,end=[...es].reverse().find(e=>e.t)?.t||null;
+    notifs.push({id:k,entries:es,count:es.length,worst,status,start,end,ms:(start&&end)?end-start:null,last:es[es.length-1]});});
+  const ord={Failed:0,Incomplete:1,OK:2};notifs.sort((a,b)=>ord[a.status]-ord[b.status]||(b.start&&a.start?b.start-a.start:0));
+  const mb=makeBuckets(withT,["lo","wa","er"]);withT.forEach(r=>{const s=sevL(r.level);mb.put(r,s>=4?"er":s===3?"wa":"lo");});
+  const errs=recs.filter(r=>sevL(r.level)>=4).sort((a,b)=>(b.t&&a.t)?b.t-a.t:0);
+  const origins=tallyTop(errs,e=>(e.logger||"?")+" · "+(e.callsite||"?"),10);
+  DB.A={recs,notifs,buckets:mb.buckets,bucketMs:mb.bucketMs,t0:mb.t0,t1:mb.t1,errs,origins,
+    nFailed:notifs.filter(n=>n.status==="Failed").length,nIncomplete:notifs.filter(n=>n.status==="Incomplete").length,nOk:notifs.filter(n=>n.status==="OK").length,total:recs.length};
+  dbRender();
+}
+function dbRender(){CURTZ=TZ.db;LAST_RENDER=dbRender;updateTzControl();const a=DB.A;let sev,title,body;
+  if(a.nFailed>0){sev="crit";title=`${num(a.nFailed)} notification${a.nFailed>1?"s":""} failed`;const ex=a.nIncomplete>0?` and ${num(a.nIncomplete)} never completed`:"";body=`${num(a.nFailed)} logged an error/fatal or failure message${ex}. Most likely not delivered — open one to see where it broke.`;}
+  else if(a.nIncomplete>0){sev="warn";title=`${num(a.nIncomplete)} notification${a.nIncomplete>1?"s":""} look incomplete`;body=`No hard errors, but these never logged a completion marker — they may not have been sent. Tune the markers above if wording differs.`;}
+  else{sev="ok";title=`All ${num(a.notifs.length)} notifications completed`;body=`Every notification with a trail shows a completion marker and no errors.`;}
+  renderVerdict(sev,title,body);renderNext(sev==="ok"?null:pageNext());
+  renderStrip([{k:"Log entries",v:num(a.total)},{k:"Notifications",v:num(a.notifs.length)},{k:"Failed",v:num(a.nFailed),mod:a.nFailed?"err":""},{k:"Incomplete",v:num(a.nIncomplete),mod:a.nIncomplete?"warn":""},{k:"Delivered",v:num(a.nOk),mod:"ok"},{k:"Time span",v:a.t0?dur(a.t1-a.t0):"—"}]);
+  renderTimeline(a.buckets,[{key:"lo",color:"#5b8def",label:"Info/Debug"},{key:"wa",color:"var(--warn)",label:"Warn"},{key:"er",color:"var(--err)",label:"Error/Fatal"}],a.t0?`${fmt(a.t0)} → ${fmt(a.t1)} · bucket ${dur(a.bucketMs)}`:"no timestamps","Log volume over time");
+  dbFlowFrom(a.notifs[0]);
+  $("#modeBody").innerHTML=`
+    <section><div class="h"><h2>Notifications</h2><span class="sub">grouped by RequestId · problems first</span></div>
+      <div class="card"><div class="filterbar" id="notifFilter"></div><input class="search" id="notifSearch" placeholder="Search RequestId or message…" value="${esc(NOTIF_SEARCH)}"><div id="notifs" style="margin-top:12px"></div></div></section>
+    <div class="cols">
+      <section><div class="h"><h2>Errors &amp; fatals</h2><span class="sub">most recent first</span></div><div class="card">${a.errs.length?`<table><tbody>${a.errs.slice(0,60).map(e=>`<tr><td style="white-space:nowrap"><span class="pill lv-${e.level}">${e.level}</span></td><td class="mono muted" style="white-space:nowrap">${fmtShort(e.t)}</td><td><div class="msg" title="${esc(e.msg)}">${esc(e.msg.split("\n")[0])}</div><div class="mono" style="font-size:11px;color:var(--tx-faint)">${esc(e.rid)} · ${esc(e.logger)}.${esc(e.callsite)}</div></td></tr>`).join("")}</tbody></table>`:`<div class="empty">No error/fatal entries.</div>`}</div></section>
+      <section><div class="h"><h2>Where errors originate</h2><span class="sub">logger / callsite</span></div><div class="card">${a.origins.length?`<table><tbody>${a.origins.map(([k,n])=>`<tr><td class="mono" style="font-size:12px">${esc(k)}</td><td class="num">${num(n)}</td><td style="width:34%"><div class="bar"><i style="width:${(n/a.origins[0][1]*100).toFixed(0)}%;background:var(--err)"></i></div></td></tr>`).join("")}</tbody></table>`:`<div class="empty">No error origins.</div>`}</div></section>
+    </div>`;
+  $("#notifSearch").oninput=e=>{NOTIF_SEARCH=e.target.value;dbNotifs();};
+  dbFilters();dbNotifs();
+  foot(`Read ${num(a.total)} rows from <span class="mono">${esc(DB.table.name)}</span> · SQLite page ${DB.db.pageSize}B`+(DB.db.wal?` · <span style="color:#e7bd82">WAL mode — newest entries may be missing</span>`:""));
+  postRender(a.total);
+}
+function dbFlowSpec(n){if(!n)return null;const failed=n.status!=="OK";const first=n.entries[0]||{},errE=n.entries.find(e=>sevL(e.level)>=4)||n.last;
+  return {caption:`Notification ${n.id} — click a row to inspect another`,failed,
+    source:{t:"Source — OrbiPay",main:n.id,lines:[first.msg?first.msg.split("\n")[0].slice(0,46):"",first.t?fmtShort(first.t):""]},
+    receiving:{t:"Receiving — client endpoint",main:(errE.logger||"delivery").replace(/^Orbi\.Notify\./,""),lines:[`${n.count} log entries`,dur(n.ms)]},
+    end:{t:failed?(n.status==="Failed"?"Failure":"Incomplete"):"Delivered",main:failed?(n.status==="Failed"?errE.level:"never sent"):"delivered",lines:[failed?(errE.msg.split("\n")[0].slice(0,60)):"completion marker seen"]}};
+}
+function dbFlowFrom(n){const spec=dbFlowSpec(n);if(spec)renderFlow(spec);return spec;}
+function dbFilters(){const a=DB.A;const opts=[["prob",`Problems (${num(a.nFailed+a.nIncomplete)})`],["Failed",`Failed (${num(a.nFailed)})`],["Incomplete",`Incomplete (${num(a.nIncomplete)})`],["OK",`Delivered (${num(a.nOk)})`],["all",`All (${num(a.notifs.length)})`]];
+  $("#notifFilter").innerHTML=`<span class="lbl">Show:</span>`+opts.map(([v,l])=>`<span class="chip ${v===NOTIF_FILTER?'on':''}" data-f="${v}">${l}</span>`).join("");
+  $("#notifFilter").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{NOTIF_FILTER=c.dataset.f;dbFilters();dbNotifs();});}
+function dbNotifs(){const a=DB.A;let list=a.notifs;if(NOTIF_FILTER==="prob")list=list.filter(n=>n.status!=="OK");else if(NOTIF_FILTER!=="all")list=list.filter(n=>n.status===NOTIF_FILTER);
+  if(NOTIF_SEARCH){const q=NOTIF_SEARCH.toLowerCase();list=list.filter(n=>n.id.toLowerCase().includes(q)||n.entries.some(e=>e.msg.toLowerCase().includes(q)));}
+  const shown=list.slice(0,300);if(!shown.length){$("#notifs").innerHTML=`<div class="empty">No notifications match.</div>`;return;}
+  $("#notifs").innerHTML=`<table><thead><tr><th class="pickcell"></th><th>Status</th><th>Notification ID</th><th>Worst</th><th class="num">Rows</th><th>Started</th><th>Duration</th><th>Last message</th></tr></thead><tbody>${shown.map(n=>`<tr class="clickrow" data-i="${a.notifs.indexOf(n)}">${pickCell("db",n,a.notifs.indexOf(n))}<td><span class="pill st-${n.status}">${n.status}</span></td><td class="mono">${esc(n.id)}</td><td><span class="pill lv-${n.worst}">${n.worst}</span></td><td class="num">${n.count}</td><td class="mono muted" style="white-space:nowrap">${fmtShort(n.start)}</td><td class="mono muted">${dur(n.ms)}</td><td><div class="msg" title="${esc(n.last.msg)}">${esc(n.last.msg.split("\n")[0])}</div></td></tr>`).join("")}</tbody></table>`+(list.length>shown.length?`<div class="empty">Showing first ${num(shown.length)} of ${num(list.length)}.</div>`:"");
+  $("#notifs").querySelectorAll(".clickrow").forEach(r=>r.onclick=()=>{const n=a.notifs[+r.dataset.i];dbOpenNotif(n,dbFlowFrom(n));});wirePicks("#notifs");}
+function dbOpenNotif(n,spec){const rows=n.entries.map(e=>{const ml=e.msg.includes("\n")||e.msg.length>140;return `<div class="step"><div class="tm">${fmtShort(e.t)}</div><div><span class="pill lv-${e.level}">${e.level}</span></div><div><div class="m ${ml?'clip':''}">${esc(e.msg)}</div><div class="src">${esc(e.logger)}.${esc(e.callsite)}</div></div></div>`;}).join("");
+  openSheet(`<div class="sh"><h3>${esc(n.id)}</h3><div class="sheetadd" style="display:flex;gap:8px"><button class="btn sm" data-pick>＋ Add to ticket</button><button class="btn sm" data-close>Close</button></div></div><div class="subttl"><span class="pill st-${n.status}">${n.status}</span> &nbsp; ${n.count} entries · ${fmt(n.start)} → ${fmt(n.end)} · ${dur(n.ms)}</div>${flowBlock(spec)}${nextBlock(nextFor("db",n))}${rows}`,"db",n);}
+
+/* ===================== MSSQL analyzer ===================== */
+const MSSQL_ERR={18456:"Login failed — authentication (bad password, missing login, or disabled).",1205:"Deadlock victim — transaction was rolled back and should be retried.",9002:"Transaction log full — log ran out of space; back up or grow the log.",8645:"Memory-grant timeout — query waited too long for a memory grant.",701:"Out of memory — server could not allocate enough memory.",845:"Buffer latch timeout — possible I/O stall.",17053:"An OS-level (I/O) error was reported to SQL Server.",17054:"SQL Server could not write an event to the Windows Application event log (often the event log is full).",17883:"Non-yielding scheduler — a worker stopped yielding (CPU/stall).",17884:"Non-yielding IOCP listener.",3041:"Backup failed — see the accompanying message for the reason.",605:"Page allocation mismatch — possible corruption.",823:"I/O error — the OS could not read/write a database file (disk/hardware).",824:"Logical consistency I/O error — page checksum/torn page (corruption).",825:"Read-retry — I/O succeeded only after retries (failing disk).",1105:"Filegroup is full — could not allocate space.",9001:"The log for the database is not available.",4060:"Cannot open the requested database.",18452:"Login from an untrusted domain / no mapping.",40197:"Azure SQL service error — request throttled or moved.",40501:"Azure SQL service busy — throttling.",50000:"User-raised error (RAISERROR)."};
+const STATE_18456={1:"error details withheld (usually a permissions/gateway masking)",2:"invalid user ID — the SQL login does not exist",5:"the login does not exist",6:"a Windows account was used with SQL authentication",7:"login is disabled and the password is wrong",8:"the password is incorrect",9:"invalid password",11:"valid login but server access failed (often a permissions issue)",12:"valid login but server access failed",13:"the SQL Server service is paused",16:"login OK but no access to the requested database",18:"the password must be changed",38:"the login's default database is missing or offline",40:"the login's default database is unavailable",58:"SQL auth attempted while the server allows Windows auth only",65:"the password is incorrect"};
+function mssqlCategory(n){if(n>=41000&&n<42000)return "Always On Availability Groups / WSFC cluster event.";if(n>=35200&&n<35300)return "Always On Availability Groups configuration event.";if(n>=19400&&n<19500)return "Always On Availability Groups event.";if(n>=17000&&n<17100)return "SQL Server / operating-system server event.";return "";}
+function firstLine(s){const d=(s||"").split("\n")[0].trim();return d.length>170?d.slice(0,170)+"…":d;}
+// concise meaning for the aggregated "by number" table
+function codeMeaning(c){return MSSQL_ERR[c.number]||firstLine(c.ex&&c.ex.detail)||mssqlCategory(c.number)||sevMeaning(c.maxSev);}
+// specific meaning for a single event (decodes 18456 state; else uses the log's own message)
+function eventMeaning(e){let base=MSSQL_ERR[e.number];if(base){if(e.number===18456&&STATE_18456[e.state])base+=` — State ${e.state}: ${STATE_18456[e.state]}`;return base;}return firstLine(e.detail)||mssqlCategory(e.number)||sevMeaning(e.severity);}
+function sevClass(s){return s>=17?"":s>=11?"mid":"low";}
+function sevMeaning(s){if(s<=10)return "informational";if(s<=16)return "user-correctable";if(s===17)return "insufficient resources";if(s===18)return "nonfatal internal error";if(s===19)return "fatal resource limit";if(s===20)return "fatal error in current process";if(s===21)return "fatal, affects all processes";if(s===22)return "table integrity suspect";if(s===23)return "database integrity suspect";if(s===24)return "hardware/media error";return "fatal system error";}
+const MSSQL_TS=/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{2,3})\s+(\S+)\s+([\s\S]*)$/;
+const MSSQL={A:null};
+function mssqlParse(text){
+  const lines=text.split(/\r?\n/),entries=[];let cur=null;
+  for(const line of lines){if(!line.trim()&&!cur)continue;const m=line.match(MSSQL_TS);
+    if(m){if(cur)entries.push(cur);cur={ts:m[1],t:parseTs(m[1]),source:m[2],msg:m[3]};}else if(cur){cur.msg+="\n"+line;}}
+  if(cur)entries.push(cur);
+  const events=[];
+  for(let i=0;i<entries.length;i++){const e=entries[i];const em=e.msg.match(/Error:\s*(\d+),\s*Severity:\s*(\d+),\s*State:\s*(\d+)/i);
+    if(em){let detail="";const nx=entries[i+1];if(nx&&nx.source===e.source)detail=nx.msg;
+      const client=(detail.match(/\[CLIENT:\s*([^\]]+)\]/i)||[])[1]||"";const user=(detail.match(/for user '([^']+)'/i)||[])[1]||"";const db=(detail.match(/database '([^']+)'/i)||detail.match(/Database:\s*([^,\n]+)/i)||[])[1]||"";
+      events.push({t:e.t,ts:e.ts,source:e.source,number:+em[1],severity:+em[2],state:+em[3],detail:detail.trim(),client:client.trim(),user,db:(db||"").trim()});}}
+  return {entries,events};
+}
+function mssqlAnalyze(d){
+  let entries=d.entries,events=d.events;
+  let instance="";
+  for(const e of entries){let m=e.msg.match(/MSSQL[0-9]+\.([A-Za-z0-9_$]+)[\\/]/i);if(!m)m=e.msg.match(/\bserver name is '([^']+)'/i);if(!m)m=e.msg.match(/-s\s*"([A-Za-z0-9_$]+)"/);if(m){instance=m[1];break;}}
+  if(CLIENT_ID){entries=entries.filter(e=>clientHit(e.msg));events=events.filter(e=>clientHit(e.detail+" "+e.db+" "+e.user+" "+e.client));}
+  if(IPF)events=events.filter(e=>ipHit(e.client));
+  const withT=entries.filter(e=>e.t).sort((a,b)=>a.t-b.t);
+  const mb=makeBuckets(withT,["info","err"]);
+  withT.forEach(e=>{const isErr=/Error:\s*\d+,\s*Severity:\s*(1[1-9]|2[0-5])/i.test(e.msg);mb.put(e,isErr?"err":"info");});
+  const severe=events.filter(e=>e.severity>=17).sort((a,b)=>(b.t&&a.t)?b.t-a.t:0);
+  const logins=events.filter(e=>e.number===18456);
+  const loginByIp=tallyTop(logins,e=>e.client||"(no client)",10);
+  const loginByState=tallyTop(logins,e=>String(e.state),8);
+  const byNumber=new Map();events.forEach(e=>{const x=byNumber.get(e.number)||{number:e.number,n:0,maxSev:0,ex:e};x.n++;x.maxSev=Math.max(x.maxSev,e.severity);byNumber.set(e.number,x);});
+  const codes=[...byNumber.values()].sort((a,b)=>b.maxSev-a.maxSev||b.n-a.n);
+  const deadlocks=events.filter(e=>e.number===1205).length;
+  return{entries,events,total:entries.length,withT,buckets:mb.buckets,bucketMs:mb.bucketMs,t0:mb.t0,t1:mb.t1,severe,logins,loginByIp,loginByState,codes,deadlocks,instance,
+    nErr:events.filter(e=>e.severity>=11).length};
+}
+function mssqlRender(meta){CURTZ=TZ.mssql;LAST_RENDER=()=>mssqlRender(meta);updateTzControl();const a=MSSQL.A;setBrand("SQL Server log","ERRORLOG analysis");fileMeta(meta.name,meta.size,num(a.total!=null?a.total:a.entries.length)+" lines");warn(meta.warn);
+  const topSevere=a.severe[0]||a.codes.find(c=>c.maxSev>=17)?.ex;
+  let sev,title,body;
+  if(a.severe.length>0){sev="crit";const s=a.severe[0];title=`${num(a.severe.length)} severe error${a.severe.length>1?"s":""} (severity ≥17)`;
+    body=`Highest is <b>Error ${s.number}, Severity ${s.severity}</b> at <span class="win">${fmt(s.t)}</span> — ${esc(MSSQL_ERR[s.number]||sevMeaning(s.severity))}`;}
+  else if(a.logins.length>=5){sev="warn";title=`${num(a.logins.length)} login failures (Error 18456)`;body=`Repeated authentication failures${a.loginByIp[0]?` — most from <span class="win">${esc(a.loginByIp[0][0])}</span>`:""}. Could be a bad app credential or a brute-force attempt.`;}
+  else if(a.deadlocks>0){sev="warn";title=`${num(a.deadlocks)} deadlock${a.deadlocks>1?"s":""} detected`;body=`Transactions were chosen as deadlock victims and rolled back — the app should retry them.`;}
+  else if(a.nErr>0){sev="warn";title=`${num(a.nErr)} error${a.nErr>1?"s":""} logged`;body=`No fatal (≥17) errors, but user-level errors are present — see the breakdown below.`;}
+  else{sev="ok";title="No errors found";body=`Parsed ${num(a.entries.length)} log lines with no Error/Severity entries.`;}
+  renderVerdict(sev,title,body);renderNext(sev==="ok"?null:pageNext());
+  renderStrip([{k:"Log lines",v:num(a.total!=null?a.total:a.entries.length)},{k:"Time span",v:a.t0?dur(a.t1-a.t0):"—"},{k:"Error events",v:num(a.events.length),mod:a.events.length?"warn":""},{k:"Severe (≥17)",v:num(a.severe.length),mod:a.severe.length?"err":""},{k:"Login failures",v:num(a.logins.length),mod:a.logins.length?"warn":""},{k:"Deadlocks",v:num(a.deadlocks),mod:a.deadlocks?"warn":""}]);
+  renderTimeline(a.buckets,[{key:"info",color:"#5b8def",label:"Info"},{key:"err",color:"var(--err)",label:"Error (sev ≥11)"}],a.t0?`${fmt(a.t0)} → ${fmt(a.t1)} · bucket ${dur(a.bucketMs)}`:"no timestamps","Message volume over time");
+  mssqlFlowFrom(topSevere||a.events[0]);
+  const codesHtml=a.codes.length?`<table><thead><tr><th>Error</th><th class="num">Count</th><th>Max sev</th><th>Meaning</th></tr></thead><tbody>${a.codes.slice(0,14).map(c=>`<tr><td class="mono">${c.number}</td><td class="num">${num(c.n)}</td><td><span class="pill sevpill ${sevClass(c.maxSev)}">${c.maxSev}</span></td><td class="cause">${esc(codeMeaning(c))}</td></tr>`).join("")}</tbody></table>`:`<div class="empty">No Error/Severity entries.</div>`;
+  const loginHtml=(a.loginByIp.length?`<table><tbody>${a.loginByIp.map(([ip,n])=>`<tr><td class="mono">${esc(ip)}</td><td class="num">${num(n)}</td><td style="width:34%"><div class="bar"><i style="width:${(n/a.loginByIp[0][1]*100).toFixed(0)}%;background:var(--warn)"></i></div></td></tr>`).join("")}</tbody></table>`:`<div class="empty">No login failures.</div>`)+(a.loginByState.length?`<div class="cause" style="margin-top:12px"><b style="color:var(--tx-dim)">Reasons:</b> ${a.loginByState.map(([st,n])=>`${num(n)}× State ${esc(st)} — ${esc(STATE_18456[st]||"unrecognised state")}`).join(" · ")}</div>`:"");
+  const severeHtml=a.severe.length?`<table><thead><tr><th class="pickcell"></th><th>Time</th><th>Error</th><th>Sev</th><th>Detail</th></tr></thead><tbody>${a.severe.slice(0,60).map(e=>`<tr class="clickrow" data-i="${a.events.indexOf(e)}">${pickCell("mssql",e,a.events.indexOf(e))}<td class="mono muted" style="white-space:nowrap">${fmtShort(e.t)}</td><td class="mono">${e.number}</td><td><span class="pill sevpill ${sevClass(e.severity)}">${e.severity}</span></td><td><div class="msg" title="${esc(e.detail)}">${esc((e.detail||"").split("\n")[0]||eventMeaning(e))}</div><div class="cause">${esc(eventMeaning(e))}</div></td></tr>`).join("")}</tbody></table>`:`<div class="empty">No severe errors.</div>`;
+  $("#modeBody").innerHTML=`
+    <section><div class="h"><h2>Errors by number</h2><span class="sub">decoded to meaning</span></div><div class="card">${codesHtml}</div></section>
+    <div class="cols">
+      <section><div class="h"><h2>Login failures by client</h2><span class="sub">Error 18456 · source IP</span></div><div class="card">${loginHtml}</div></section>
+      <section><div class="h"><h2>Severe errors</h2><span class="sub">severity ≥17 · click for detail</span></div><div class="card">${severeHtml}</div></section>
+    </div>`;
+  $("#modeBody").querySelectorAll(".clickrow").forEach(r=>r.onclick=()=>{const e=a.events[+r.dataset.i];mssqlOpen(e,mssqlFlowFrom(e));});wirePicks("#modeBody");
+  foot(`Parsed ${num(a.total!=null?a.total:a.entries.length)} lines · SQL Server ERRORLOG`+(a.instance?` · instance ${esc(a.instance)}`:"")+(meta.enc?` · ${meta.enc}`:""));
+}
+function mssqlFlowSpec(e){if(!e)return null;const failed=e.severity>=11;
+  const inst=(MSSQL.A&&MSSQL.A.instance)||"";
+  const recvMain=e.db||inst||"SQL Server";
+  const recvLines=[];
+  if(inst&&recvMain!==inst)recvLines.push("instance "+inst);
+  recvLines.push(e.source);recvLines.push("state "+e.state);
+  return {caption:`Error ${e.number} (severity ${e.severity}) — click a severe error to inspect another`,failed,
+    source:{t:"Source — client",main:e.client||(e.user?("login "+e.user):"internal / "+e.source),lines:[e.user?("user "+e.user):"",e.t?fmtShort(e.t):""]},
+    receiving:{t:"Receiving — SQL Server",main:recvMain,lines:recvLines},
+    end:{t:failed?"Failure":"Info",main:`Error ${e.number} (sev ${e.severity})`,lines:[eventMeaning(e).slice(0,80)]}};
+}
+function mssqlFlowFrom(e){const spec=mssqlFlowSpec(e);if(spec)renderFlow(spec);return spec;}
+function mssqlOpen(e,spec){openSheet(`<div class="sh"><h3>Error ${e.number} · Severity ${e.severity} · State ${e.state}</h3><div class="sheetadd" style="display:flex;gap:8px"><button class="btn sm" data-pick>＋ Add to ticket</button><button class="btn sm" data-close>Close</button></div></div>
+  <div class="subttl">${fmt(e.t)} · ${esc(e.source)}${e.client?` · CLIENT ${esc(e.client)}`:""}${e.db?` · db ${esc(e.db)}`:""}</div>
+  ${flowBlock(spec)}${nextBlock(nextFor("mssql",e))}
+  <div class="cause" style="margin-bottom:12px">${esc(eventMeaning(e))}</div>
+  <div class="step"><div class="tm">${fmtShort(e.t)}</div><div><span class="pill sevpill ${sevClass(e.severity)}">sev ${e.severity}</span></div><div><div class="m">${esc(e.detail||"(no accompanying message line)")}</div></div></div>`,"mssql",e);}
+
+/* ===================== iNovah analyzer ===================== */
+const INOVAH={A:null};
+let INOVAH_FILTER="all",INOVAH_SEARCH="";
+function inovahLevel(cat){cat=(cat||"").toLowerCase();if(cat.startsWith("err"))return "Error";if(cat.startsWith("warn"))return "Warn";if(cat.startsWith("crit")||cat.startsWith("fatal"))return "Fatal";if(cat.startsWith("info"))return "Info";if(cat.startsWith("verb")||cat.startsWith("debug")||cat.startsWith("trace"))return "Debug";return cat?(cat[0].toUpperCase()+cat.slice(1)):"Info";}
+function inovahWhen(v){const dm=v.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);const um=v.match(/\(([\d:.]+)\s*UTC\)/i);
+  if(dm&&um){const tm=um[1].match(/(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d+))?/);if(tm){const ms=tm[4]?Number((tm[4]+"000").slice(0,3)):0;const d=new Date(Date.UTC(+dm[3],+dm[1]-1,+dm[2],+tm[1],+tm[2],+tm[3],ms));return isNaN(d)?null:d;}}
+  const d=new Date(v);return isNaN(d)?null:d;}
+function inovahParseEntry(block){
+  const lines=block.split(/\r?\n/);const e={when:"",t:null,eventId:"",source:"",category:"",method:"",threadId:"",message:"",exType:"",exSource:"",exTarget:"",exMessage:"",stack:""};
+  let i=0;
+  for(;i<lines.length;i++){const line=lines[i];if(/^\s*Message:/i.test(line))break;const m=line.match(/^\s*([A-Za-z][A-Za-z ]+?):\s+(.+?)\s*$/);if(!m)continue;
+    const k=m[1].trim().toLowerCase(),val=m[2].trim();
+    if(k==="when"){e.when=val;e.t=inovahWhen(val);}else if(k==="event id")e.eventId=val;else if(k==="source")e.source=val;else if(k==="category")e.category=val;else if(k==="method name")e.method=val;else if(k==="thread id")e.threadId=val;}
+  if(i<lines.length&&/^\s*Message:/i.test(lines[i])){const inline=lines[i].replace(/^\s*Message:\s?/i,"");const msg=[];if(inline.trim())msg.push(inline);i++;
+    for(;i<lines.length;i++){const line=lines[i];if(/^\s*-{5,}\s*$/.test(line))break;if(/^\s*Exception:\s*$/i.test(line))break;msg.push(line);}e.message=msg.join("\n").trim();}
+  const exIdx=lines.findIndex(l=>/^\s*Exception:\s*$/i.test(l));
+  if(exIdx>=0){let stackMode=false,lastMsg=false;const stack=[];
+    for(let j=exIdx+1;j<lines.length;j++){const line=lines[j];
+      if(stackMode){stack.push(line);continue;}
+      if(/^\s*Stack trace:\s*$/i.test(line)){stackMode=true;continue;}
+      if(/^\s*-{5,}\s*$/.test(line)){lastMsg=false;continue;}
+      const m=line.match(/^\s*([A-Za-z]+):\s+(.+?)\s*$/);
+      if(m){const k=m[1].toLowerCase(),v=m[2].trim();lastMsg=false;if(k==="type")e.exType=v;else if(k==="source")e.exSource=v;else if(k==="target")e.exTarget=v;else if(k==="message"){e.exMessage=v;lastMsg=true;}}
+      else if(lastMsg&&line.trim())e.exMessage+=" "+line.trim();}
+    e.stack=stack.join("\n").trim();}
+  return e;
+}
+function inovahParse(text){
+  const lines=text.split(/\r?\n/);
+  const grab=re=>{for(const l of lines.slice(0,40)){const m=l.match(re);if(m)return m[1].trim();}return "";};
+  const head={machine:grab(/^\s*Machine:\s*(.+)$/i),instance:grab(/^\s*iNovah Instance:\s*(.+)$/i),os:grab(/^\s*O\/S version:\s*(.+)$/i),logfile:grab(/^\s*Log file:\s*(.+)$/i)};
+  const idxs=[];lines.forEach((l,i)=>{if(/^={5,}\s*$/.test(l))idxs.push(i);});
+  const blocks=[];for(let k=0;k<idxs.length;k++){const s=idxs[k]+1,en=(k+1<idxs.length)?idxs[k+1]:lines.length;blocks.push(lines.slice(s,en).join("\n"));}
+  const entries=blocks.map(inovahParseEntry).filter(e=>e&&(e.when||e.category||e.message||e.exType));
+  return {head,entries};
+}
+function inovahAnalyze(d){
+  const inst=(d.head&&d.head.instance)||"";
+  let entries=d.entries.map(e=>({...e,level:inovahLevel(e.category)}));
+  if(CLIENT_ID)entries=entries.filter(e=>clientHit(e.message+" "+e.exMessage+" "+e.exType+" "+e.method+" "+inst));
+  const withT=entries.filter(e=>e.t).sort((a,b)=>a.t-b.t);
+  const mb=makeBuckets(withT,["lo","wa","er"]);withT.forEach(e=>{const s=sevL(e.level);mb.put(e,s>=4?"er":s===3?"wa":"lo");});
+  const issues=entries.filter(e=>sevL(e.level)>=3||e.exType).sort((a,b)=>(b.t&&a.t)?b.t-a.t:0);
+  const gmap=new Map();
+  issues.forEach(e=>{const key=(e.exType||e.level)+" | "+firstLine(e.exMessage||e.message||e.method);
+    const g=gmap.get(key)||{key,exType:e.exType,level:e.level,sample:e,n:0,first:e.t,last:e.t};
+    g.n++;if(e.t){if(!g.first||e.t<g.first)g.first=e.t;if(!g.last||e.t>g.last)g.last=e.t;}gmap.set(key,g);});
+  const groups=[...gmap.values()].sort((a,b)=>b.n-a.n||sevL(b.level)-sevL(a.level));
+  const exTypes=tallyTop(entries.filter(e=>e.exType),e=>e.exType,10);
+  return {head:d.head,total:entries.length,entries,withT,buckets:mb.buckets,bucketMs:mb.bucketMs,t0:mb.t0,t1:mb.t1,issues,groups,exTypes,
+    errCount:entries.filter(e=>sevL(e.level)>=4).length,warnCount:entries.filter(e=>sevL(e.level)===3).length};
+}
+function inovahRender(meta){CURTZ=TZ.inovah;LAST_RENDER=()=>inovahRender(meta);updateTzControl();const a=INOVAH.A;const totalEntries=a.total!=null?a.total:a.entries.length;setBrand("iNovah logs","application log analysis");fileMeta(meta.name,meta.size,num(totalEntries)+" entries");warn("");
+  let sev,title,body;
+  if(a.errCount>0){sev="crit";const top=a.groups.find(g=>sevL(g.level)>=4)||a.groups[0];
+    title=`${num(a.errCount)} error${a.errCount>1?"s":""} logged`;
+    body=`Most common: <b>${esc((top.exType||top.level))}</b> (${num(top.n)}×) — ${esc(firstLine(top.sample.exMessage||top.sample.message||top.sample.method))}`;}
+  else if(a.warnCount>0){sev="warn";title=`${num(a.warnCount)} warning${a.warnCount>1?"s":""} logged`;body=`No errors, but warnings are present — review the issues list below.`;}
+  else{sev="ok";title="No errors or warnings";body=`Parsed ${num(a.entries.length)} entries with no error/warning categories.`;}
+  renderVerdict(sev,title,body);renderNext(sev==="ok"?null:pageNext());
+  renderStrip([{k:"Entries",v:num(totalEntries)},{k:"Errors",v:num(a.errCount),mod:a.errCount?"err":""},{k:"Warnings",v:num(a.warnCount),mod:a.warnCount?"warn":""},{k:"Exception types",v:num(a.exTypes.length)},{k:"Time span",v:a.t0?dur(a.t1-a.t0):"—"},{k:"Instance",v:esc(a.head.instance||"—")}]);
+  renderTimeline(a.buckets,[{key:"lo",color:"#5b8def",label:"Info/Debug"},{key:"wa",color:"var(--warn)",label:"Warning"},{key:"er",color:"var(--err)",label:"Error/Fatal"}],a.t0?`${fmt(a.t0)} → ${fmt(a.t1)} · bucket ${dur(a.bucketMs)}`:"no timestamps","Entries over time");
+  inovahFlowFrom((a.groups[0]&&a.groups[0].sample)||a.issues[0]);
+  const grpMax=a.groups.length?a.groups[0].n:1;
+  const groupsHtml=a.groups.length?`<table><tbody>${a.groups.slice(0,10).map(g=>`<tr class="clickrow" data-gi="${a.groups.indexOf(g)}"><td><span class="pill lv-${g.level}">${g.level}</span></td><td class="num">${num(g.n)}×</td><td><div class="mono" style="font-size:12px;color:var(--tx)">${esc((g.exType||"").split(".").pop()||g.level)}</div><div class="cause">${esc(firstLine(g.sample.exMessage||g.sample.message||g.sample.method))}</div></td><td style="width:22%"><div class="bar"><i style="width:${(g.n/grpMax*100).toFixed(0)}%;background:${sevL(g.level)>=4?'var(--err)':'var(--warn)'}"></i></div></td></tr>`).join("")}</tbody></table>`:`<div class="empty">No recurring issues.</div>`;
+  const exMax=a.exTypes.length?a.exTypes[0][1]:1;
+  const exHtml=a.exTypes.length?`<table><tbody>${a.exTypes.map(([k,n])=>`<tr><td class="mono" style="font-size:12px">${esc(k)}</td><td class="num">${num(n)}</td><td style="width:34%"><div class="bar"><i style="width:${(n/exMax*100).toFixed(0)}%;background:var(--err)"></i></div></td></tr>`).join("")}</tbody></table>`:`<div class="empty">No exceptions.</div>`;
+  $("#modeBody").innerHTML=`
+    <section><div class="h"><h2>Issues</h2><span class="sub">errors, warnings &amp; exceptions · click any row for full detail</span></div>
+      <div class="card"><div class="filterbar" id="inovahFilter"></div><input class="search" id="inovahSearch" placeholder="Search message, method or exception type…" value="${esc(INOVAH_SEARCH)}"><div id="inovahIssues" style="margin-top:12px"></div></div></section>
+    <div class="cols">
+      <section><div class="h"><h2>Recurring issues</h2><span class="sub">grouped · most frequent first</span></div><div class="card">${groupsHtml}</div></section>
+      <section><div class="h"><h2>Exception types</h2><span class="sub">by count</span></div><div class="card">${exHtml}</div></section>
+    </div>`;
+  $("#inovahSearch").oninput=e=>{INOVAH_SEARCH=e.target.value;inovahIssues();};
+  $("#modeBody").querySelectorAll("[data-gi]").forEach(r=>r.onclick=()=>{const g=a.groups[+r.dataset.gi];inovahOpen(g.sample,inovahFlowFrom(g.sample));});
+  inovahFilters();inovahIssues();
+  foot(`Parsed ${num(a.entries.length)} entries · iNovah ${esc(a.head.instance||"")} on ${esc(a.head.machine||"?")}`+(meta.enc?` · ${meta.enc}`:""));
+}
+function inovahFlowSpec(e){if(!e)return null;const failed=sevL(e.level)>=3;const A=INOVAH.A||{head:{}};
+  const inst=A.head.instance||"iNovah",machine=A.head.machine||"app server";
+  const methodShort=(e.method||"").split(".").pop()||e.source||"app";
+  const key=(e.exMessage||e.message||"").match(/"([^"]+)"/);
+  const exShort=(e.exType||"").split(".").pop();
+  return {caption:`${(e.method||e.source||"").split(".").pop()} — click an issue to inspect another`,failed,
+    source:{t:"Source — component",main:methodShort,lines:[machine,e.threadId?("thread "+e.threadId):""]},
+    receiving:{t:"Receiving — iNovah",main:inst,lines:[e.exTarget||e.exSource||"",key?key[1]:""]},
+    end:{t:failed?"Failure":"Info",main:exShort||e.level,lines:[firstLine(e.exMessage||e.message)]}};
+}
+function inovahFlowFrom(e){const spec=inovahFlowSpec(e);if(spec)renderFlow(spec);return spec;}
+function inovahFilters(){const a=INOVAH.A;const opts=[["all",`All (${num(a.issues.length)})`],["Error",`Errors (${num(a.errCount)})`],["Warn",`Warnings (${num(a.warnCount)})`],["ex",`With exception (${num(a.entries.filter(e=>e.exType).length)})`]];
+  $("#inovahFilter").innerHTML=`<span class="lbl">Show:</span>`+opts.map(([v,l])=>`<span class="chip ${v===INOVAH_FILTER?'on':''}" data-f="${v}">${l}</span>`).join("");
+  $("#inovahFilter").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{INOVAH_FILTER=c.dataset.f;inovahFilters();inovahIssues();});}
+function inovahIssues(){const a=INOVAH.A;let list=a.issues;
+  if(INOVAH_FILTER==="Error")list=list.filter(e=>e.level==="Error"||e.level==="Fatal");
+  else if(INOVAH_FILTER==="Warn")list=list.filter(e=>e.level==="Warn");
+  else if(INOVAH_FILTER==="ex")list=list.filter(e=>e.exType);
+  if(INOVAH_SEARCH){const q=INOVAH_SEARCH.toLowerCase();list=list.filter(e=>(e.message+e.method+e.exType+e.exMessage).toLowerCase().includes(q));}
+  const shown=list.slice(0,300);
+  if(!shown.length){$("#inovahIssues").innerHTML=`<div class="empty">No issues match.</div>`;return;}
+  $("#inovahIssues").innerHTML=`<table><thead><tr><th class="pickcell"></th><th>Time</th><th>Level</th><th>Method</th><th>Message / exception</th></tr></thead><tbody>${shown.map(e=>`<tr class="clickrow" data-i="${a.issues.indexOf(e)}">${pickCell("inovah",e,a.issues.indexOf(e))}<td class="mono muted" style="white-space:nowrap">${fmtShort(e.t)}</td><td><span class="pill lv-${e.level}">${e.level}</span></td><td class="mono" style="font-size:12px">${esc((e.method||"").split(".").pop()||e.source)}</td><td><div class="msg" title="${esc(e.message||e.exMessage)}">${esc(firstLine(e.message||e.exMessage))}</div>${e.exType?`<div class="cause">${esc(e.exType)}</div>`:""}</td></tr>`).join("")}</tbody></table>`+(list.length>shown.length?`<div class="empty">Showing first ${num(shown.length)} of ${num(list.length)}.</div>`:"");
+  $("#inovahIssues").querySelectorAll(".clickrow").forEach(r=>r.onclick=()=>{const e=a.issues[+r.dataset.i];inovahOpen(e,inovahFlowFrom(e));});wirePicks("#inovahIssues");}
+function inovahOpen(e,spec){
+  const block=(label,html)=>html?`<div class="idlbl">${esc(label)}</div><div class="idval">${html}</div>`:"";
+  openSheet(`<div class="sh"><h3>${esc((e.exType||("iNovah "+e.level)))}</h3><div class="sheetadd" style="display:flex;gap:8px"><button class="btn sm" data-pick>＋ Add to ticket</button><button class="btn sm" data-close>Close</button></div></div>
+    <div class="subttl"><span class="pill lv-${e.level}">${e.level}</span> &nbsp; ${fmt(e.t)} &nbsp;·&nbsp; ${esc(e.method||e.source)} &nbsp;·&nbsp; thread ${esc(e.threadId||"?")}</div>
+    ${flowBlock(spec)}${nextBlock(nextFor("inovah",e))}
+    ${block("Message", e.message?esc(e.message):"<span class='muted'>(none)</span>")}
+    ${e.exType?block("Exception", `<b>${esc(e.exType)}</b>${e.exSource?` · source ${esc(e.exSource)}`:""}${e.exTarget?` · target ${esc(e.exTarget)}`:""}${e.exMessage?"\n"+esc(e.exMessage):""}`):""}
+    ${e.stack?block("Stack trace", `<pre class="stk">${esc(e.stack)}</pre>`):""}`,"inovah",e);
+}
+
+/* ===================== selection & export ("build a ticket") ===================== */
+const PICK_ARR={iis:()=>IIS.A&&IIS.A.failures,iisslow:()=>IIS.A&&IIS.A.slow,inovah:()=>INOVAH.A&&INOVAH.A.issues,mssql:()=>MSSQL.A&&MSSQL.A.events,db:()=>DB.A&&DB.A.notifs};
+function pickKey(mode,it){const t=it.t?it.t.getTime():(it.start?it.start.getTime():0);
+  if(mode==="iis")return `iis|${t}|${it.status}.${it.substatus}|${it.uri}|${it.cIp}`;
+  if(mode==="inovah")return `inovah|${t}|${it.method}|${it.exType}|${firstLine(it.message||it.exMessage)}`;
+  if(mode==="mssql")return `mssql|${t}|${it.number}|${it.source}|${it.state}`;
+  return `db|${it.id}`;}
+function pickBlock(mode,it){
+  if(mode==="iis")return `${it.status}.${it.substatus}  ${it.method} ${it.uri}${it.query?"?"+it.query:""}\n`+
+    `    Time: ${fmt(it.t)}\n    Client ${it.cIp} -> server ${it.sIp||"?"}\n    Cause: ${iisCause(it.status,it.substatus)}`+
+    (it.timeTaken?`\n    Time-taken: ${it.timeTaken} ms`:"")+(it.win32?`\n    Win32 status: ${it.win32}`:"");
+  if(mode==="inovah"){let s=`${it.exType||("iNovah "+it.level)}${it.method?"  ("+it.method+")":""}\n    Level: ${it.level}    Time: ${fmt(it.t)}`;
+    if(it.message)s+=`\n    Message: ${it.message.split("\n")[0]}`;
+    if(it.exType)s+=`\n    Exception: ${it.exType}${it.exMessage?" — "+it.exMessage:""}`;
+    if(it.stack)s+=`\n    Stack trace:\n`+it.stack.split("\n").map(l=>"      "+l.trim()).join("\n");
+    return s;}
+  if(mode==="mssql")return `Error ${it.number}  (Severity ${it.severity}, State ${it.state})\n`+
+    `    Time: ${fmt(it.t)}\n    Source: ${it.source}${it.client?" · CLIENT "+it.client:""}${it.user?" · user "+it.user:""}${it.db?" · db "+it.db:""}\n`+
+    `    Meaning: ${eventMeaning(it)}`+(it.detail?`\n    Detail: ${it.detail.split("\n")[0]}`:"");
+  return `${it.id}  [${it.status}]\n    Worst level: ${it.worst} · ${it.count} entries\n    ${fmt(it.start)} -> ${fmt(it.end)}  (${dur(it.ms)})`+
+    (it.last?`\n    Last message: ${it.last.msg.split("\n")[0]}`:"");}
+function pickTitle(mode,it){
+  if(mode==="iis")return `${it.status}.${it.substatus} ${it.method} ${it.uri}`;
+  if(mode==="inovah")return `${it.exType||it.level} ${(it.method||"").split(".").pop()}`;
+  if(mode==="mssql")return `Error ${it.number} (sev ${it.severity})`;
+  return `${it.id} [${it.status}]`;}
+function togglePick(mode,it,on){const k=pickKey(mode,it);if(on)PICKS.set(k,{mode,title:pickTitle(mode,it),block:pickBlock(mode,it)+nextText(nextFor(mode,it))});else PICKS.delete(k);renderPickBar();}
+function pickCell(mode,it,idx,arrKey){return `<td class="pickcell"><input type="checkbox" class="pick" title="Select for ticket" data-mode="${mode}" data-arr="${arrKey||mode}" data-i="${idx}" ${PICKS.has(pickKey(mode,it))?"checked":""}></td>`;}
+function wirePicks(containerSel){const el=$(containerSel);if(!el)return;el.querySelectorAll(".pick").forEach(cb=>{cb.onclick=e=>e.stopPropagation();cb.onchange=()=>{const g=PICK_ARR[cb.dataset.arr];const arr=g&&g();if(!arr)return;const it=arr[+cb.dataset.i];if(it)togglePick(cb.dataset.mode,it,cb.checked);};});}
+function renderPickBar(){const n=PICKS.size,bar=$("#pickBar");if(!n){bar.classList.add("hidden");return;}bar.classList.remove("hidden");$("#pickCount").textContent=n+" selected";$("#pickFlash").textContent="";}
+function clearPicks(){PICKS.clear();document.querySelectorAll(".pick").forEach(cb=>cb.checked=false);renderPickBar();}
+function flashPick(msg){$("#pickFlash").textContent=msg;setTimeout(()=>{if($("#pickFlash").textContent===msg)$("#pickFlash").textContent="";},2500);}
+function buildExport(){
+  const mode=CUR_MODE,A=mode==="iis"?IIS.A:mode==="mssql"?MSSQL.A:mode==="inovah"?INOVAH.A:DB.A;
+  const names={iis:"IIS web log",mssql:"SQL Server log",inovah:"iNovah log",db:"E-Commerce log"};
+  const vh=$("#verdict").querySelector("h3"),vp=$("#verdict").querySelector("p");
+  const L=[];
+  L.push("LOG FORENSICS EXPORT — "+(names[mode]||mode));
+  if(CUR_META)L.push("Source: "+CUR_META.name+" ("+CUR_META.size+")");
+  if(CLIENT_ID)L.push("Client: "+CLIENT_RAW);
+  if(A&&A.t0)L.push("Log timeframe: "+fmt(A.t0)+"  ->  "+fmt(A.t1));
+  L.push("Generated: "+new Date().toISOString().replace("T"," ").slice(0,19)+" UTC");
+  L.push("");
+  if(vh)L.push("SUMMARY: "+vh.textContent+(vp?" — "+vp.textContent:""));
+  const ns=[...document.querySelectorAll("#nextSteps li")].map((li,i)=>"  "+(i+1)+". "+li.textContent.trim());if(ns.length){L.push("");L.push("SUGGESTED NEXT STEPS"+($("#nextSteps .nt")?" "+$("#nextSteps .nt").textContent.trim():""));ns.forEach(x=>L.push(x));const es=$("#nextSteps .esc");if(es)L.push("  "+es.textContent.trim());}
+  L.push("");L.push("SELECTED ITEMS ("+PICKS.size+")");L.push("");
+  let i=1;for(const p of PICKS.values()){L.push((i++)+". "+p.block);L.push("");}
+  return L.join("\n").trim()+"\n";
+}
+function copyExport(){const text=buildExport();
+  const done=()=>flashPick("Copied ✓");
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  else fallbackCopy(text,done);}
+function fallbackCopy(text,done){try{const ta=document.createElement("textarea");ta.value=text;ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.focus();ta.select();document.execCommand("copy");document.body.removeChild(ta);done();}catch(e){alert("Couldn't copy automatically — here is the export:\n\n"+text);}}
+function downloadExport(){const text=buildExport();const blob=new Blob([text],{type:"text/plain"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=(CLIENT_RAW?CLIENT_RAW+"-":"")+"log-forensics-export.txt";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(url),1500);flashPick("Downloaded ✓");}
+
+/* ===================== shell / router ===================== */
+function setBrand(t,tag){$("#brandTitle").textContent=t;$("#brandTag").textContent=tag;}
+function fileMeta(name,size,extra){$("#filemeta").innerHTML=`<b>${esc(name)}</b> · ${size}${extra?" · "+extra:""}`;}
+function warn(msg){const w=$("#warnbar");if(msg){w.className="warnbar";w.textContent="⚠ "+msg;}else w.className="hidden";}
+function foot(html){$("#foot").innerHTML=html+`. No data left this machine.`;}
+function showReport(){$("#home").classList.add("hidden");$("#report").classList.remove("hidden");$("#homeBtn").classList.remove("hidden");refreshClientBar();window.scrollTo({top:0});}
+function goHome(){$("#report").classList.add("hidden");$("#home").classList.remove("hidden");$("#homeBtn").classList.add("hidden");$("#filemeta").innerHTML="";$("#cfg").innerHTML="";$("#modeBody").innerHTML="";$("#file").value="";setBrand("Log Forensics","offline incident reconstruction");TL=null;LAST_RENDER=null;LAST_WARN="";CLIENT_ID="";CLIENT_RAW="";IPF="";IP_RAW="";CUR_MODE=null;CUR_FILES=null;CUR_TEXT=null;$("#clientBar").classList.add("hidden");clearPicks();hideScan();window.scrollTo({top:0});}
+$("#homeBtn").onclick=goHome;
+
+let PENDING_MODE=null;
+const fileInput=$("#file");
+function openPicker(mode){PENDING_MODE=mode;fileInput.value="";fileInput.accept=ACCEPT[mode]||"";fileInput.click();}
+fileInput.onchange=()=>{const fs=[...fileInput.files];if(fs.length)loadFiles(PENDING_MODE,fs);};
+const TEXT_CAP=25*1024*1024, HEAD_BYTES=1024*1024; // decode at most ~25MB; keep 1MB of header
+function encName(u8){if(u8[0]===0xff&&u8[1]===0xfe)return "UTF-16LE";if(u8[0]===0xfe&&u8[1]===0xff)return "UTF-16BE";if(u8[0]===0xef&&u8[1]===0xbb&&u8[2]===0xbf)return "UTF-8 BOM";return "UTF-8";}
+function decodeFixed(enc,u8,stripBom){let start=0;if(stripBom){if(enc==="UTF-16LE"||enc==="UTF-16BE")start=2;else if(enc==="UTF-8 BOM")start=3;}const dec=enc==="UTF-16LE"?"utf-16le":enc==="UTF-16BE"?"utf-16be":"utf-8";return new TextDecoder(dec).decode(start?u8.subarray(start):u8);}
+function readSlice(f,start,end){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(new Uint8Array(r.result));r.onerror=()=>rej(r.error||new Error("read error"));r.readAsArrayBuffer(f.slice(start,end));});}
+async function readTextSmart(f){
+  if(f.size<=TEXT_CAP){const u8=await readSlice(f,0,f.size);return {text:decodeBytes(u8),enc:encName(u8),truncated:false,omitted:0};}
+  const head=await readSlice(f,0,HEAD_BYTES);const enc=encName(head);
+  let tailStart=f.size-(TEXT_CAP-HEAD_BYTES);if(enc.indexOf("UTF-16")>=0&&tailStart%2)tailStart++;
+  const tail=await readSlice(f,tailStart,f.size);
+  return {text:decodeFixed(enc,head,true)+"\n"+decodeFixed(enc,tail,false),enc,truncated:true,omitted:tailStart-HEAD_BYTES};
+}
+/* ---- streaming scan for large files: read whole file in chunks, keep only problems + running aggregates ---- */
+function newHist(){return {map:new Map(),tMin:Infinity,tMax:-Infinity};}
+function histAdd(h,t,key){if(!t)return;const m=Math.floor(t.getTime()/60000);let e=h.map.get(m);if(!e){e={total:0};h.map.set(m,e);}e[key]=(e[key]||0)+1;e.total++;const ms=t.getTime();if(ms<h.tMin)h.tMin=ms;if(ms>h.tMax)h.tMax=ms;}
+function histBuckets(h,keys){
+  if(!h.map.size)return{buckets:[],bucketMs:60000,t0:null,t1:null};
+  const t0=new Date(Math.floor(h.tMin/60000)*60000),t1=new Date(h.tMax),span=t1-t0;
+  const bucketMs=Math.max(60000,Math.round(span/48/60000)*60000)||60000;
+  const n=Math.max(1,Math.ceil((span+1)/bucketMs));
+  const buckets=Array.from({length:n},(_,i)=>{const o={t:new Date(+t0+i*bucketMs),total:0};keys.forEach(k=>o[k]=0);return o;});
+  for(const [min,e] of h.map){const bi=Math.min(n-1,Math.floor((min*60000-+t0)/bucketMs));const b=buckets[bi];keys.forEach(k=>{if(e[k])b[k]+=e[k];});b.total+=e.total;}
+  return {buckets,bucketMs,t0,t1};
+}
+async function streamLines(f,onLine,onChunk){
+  const first=await readSlice(f,0,4),enc=encName(first);
+  const dec=enc==="UTF-16LE"?"utf-16le":enc==="UTF-16BE"?"utf-16be":"utf-8";
+  const td=new TextDecoder(dec); const CH=8*1024*1024; let carry="";
+  for(let pos=0;pos<f.size;pos+=CH){const end=Math.min(f.size,pos+CH);const u8=await readSlice(f,pos,end);carry+=td.decode(u8,{stream:true});
+    let nl;while((nl=carry.indexOf("\n"))>=0){onLine(carry.slice(0,nl).replace(/\r$/,""));carry=carry.slice(nl+1);}
+    if(onChunk)onChunk(end);}
+  carry+=td.decode();
+  let nl;while((nl=carry.indexOf("\n"))>=0){onLine(carry.slice(0,nl).replace(/\r$/,""));carry=carry.slice(nl+1);}
+  if(carry.length)onLine(carry);
+  return enc;
+}
+// stream several files of the same type through one consumer, flushing state between files
+async function streamFiles(files,onLine,onBoundary,onProgress){
+  const total=files.reduce((a,f)=>a+f.size,0);let done=0,enc0=null;
+  for(let i=0;i<files.length;i++){
+    const enc=await streamLines(files[i],onLine,end=>{if(onProgress)onProgress(done+end,total);});
+    if(i===0)enc0=enc;done+=files[i].size;if(onBoundary)onBoundary();if(onProgress)onProgress(done,total);
+  }
+  return enc0;
+}
+// read several small files fully and merge, separated by an entry boundary so parsers don't fuse them
+async function readAllText(files){
+  const SEP="\n================================================================================\n";
+  let parts=[],enc0=null;
+  for(const f of files){const u8=await readSlice(f,0,f.size);const e=encName(u8);if(!enc0)enc0=e;parts.push(decodeBytes(u8));}
+  return {text:parts.join(SEP),enc:enc0};
+}
+/* ---- scan progress UI ---- */
+function showScan(title){$("#scantitle").textContent=title||"Scanning log…";setScan(0);$("#scan").classList.remove("hidden");}
+function setScan(frac){const pct=Math.max(0,Math.min(100,Math.round(frac*100)));$("#scanfill").style.width=pct+"%";$("#scanpct").textContent=pct+"%";}
+function hideScan(){$("#scan").classList.add("hidden");}
+/* ---- timezone control ---- */
+function updateTzControl(){
+  let opts="";for(let h=-12;h<=14;h++){const m=h*60;opts+=`<option value="${m}" ${CURTZ.shift===m?"selected":""}>${h===0?"as logged":(h>0?"+":"−")+Math.abs(h)+":00"}</option>`;}
+  $("#tzWrap").innerHTML=`<span class="tzlbl">times: <b>${tzTag()}</b> · adjust</span><select id="tzSel" title="Shift displayed times to reconcile clocks across logs">${opts}</select>`;
+  $("#tzSel").onchange=e=>{CURTZ.shift=+e.target.value;if(LAST_RENDER)LAST_RENDER();if(LAST_WARN)warn(LAST_WARN);};
+}
+function inovahStream(files,onProgress){return new Promise((resolve,reject)=>{
+  const head={machine:"",instance:"",os:"",logfile:""};let headDone=false;let headLines=[];
+  let cur=[],total=0,errCount=0,warnCount=0,dropped=0;const issues=[],CAP=6000;const gmap=new Map(),exMap=new Map(),hist=newHist();
+  const grabHead=()=>{const g=re=>{for(const l of headLines){const m=l.match(re);if(m)return m[1].trim();}return "";};head.machine=head.machine||g(/^\s*Machine:\s*(.+)$/i);head.instance=head.instance||g(/^\s*iNovah Instance:\s*(.+)$/i);head.os=head.os||g(/^\s*O\/S version:\s*(.+)$/i);head.logfile=head.logfile||g(/^\s*Log file:\s*(.+)$/i);};
+  const finalize=()=>{if(!cur.length)return;const e=inovahParseEntry(cur.join("\n"));cur=[];if(!(e.when||e.category||e.message||e.exType))return;
+    if(CLIENT_ID&&!clientHit(e.message+" "+e.exMessage+" "+e.exType+" "+e.method+" "+head.instance))return;
+    e.level=inovahLevel(e.category);total++;const s=sevL(e.level);if(s>=4)errCount++;else if(s===3)warnCount++;histAdd(hist,e.t,s>=4?"er":s===3?"wa":"lo");
+    if(e.exType)exMap.set(e.exType,(exMap.get(e.exType)||0)+1);
+    if(s>=3||e.exType){const key=(e.exType||e.level)+" | "+firstLine(e.exMessage||e.message||e.method);let g=gmap.get(key);if(!g){g={key,exType:e.exType,level:e.level,sample:e,n:0,first:e.t,last:e.t};gmap.set(key,g);}g.n++;if(e.t){if(!g.first||e.t<g.first)g.first=e.t;if(!g.last||e.t>g.last)g.last=e.t;}
+      if(issues.length<CAP)issues.push(e);else{issues.shift();issues.push(e);dropped++;}}};
+  const onLine=line=>{if(/^={5,}\s*$/.test(line)){if(!headDone){grabHead();headDone=true;}else finalize();return;}if(!headDone){if(headLines.length<400)headLines.push(line);}else cur.push(line);};
+  const boundary=()=>{if(!headDone)grabHead();finalize();headDone=false;headLines=[];cur=[];}; // flush trailing entry; next file re-reads its header
+  streamFiles(files,onLine,boundary,onProgress).then(enc=>{
+    issues.sort((a,b)=>(b.t&&a.t)?b.t-a.t:0);
+    const groups=[...gmap.values()].sort((a,b)=>b.n-a.n||sevL(b.level)-sevL(a.level));
+    const exTypes=[...exMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const hb=histBuckets(hist,["lo","wa","er"]);
+    resolve({head,total,entries:issues,issues,groups,exTypes,errCount,warnCount,buckets:hb.buckets,bucketMs:hb.bucketMs,t0:hb.t0,t1:hb.t1,enc,scanned:true,dropped});
+  }).catch(reject);
+});}
+function mssqlStream(files,onProgress){return new Promise((resolve,reject)=>{
+  let total=0,dropped=0,instance="";const events=[],CAP=20000,hist=newHist();let pendingErr=null;
+  const push=ev=>{if(events.length<CAP)events.push(ev);else{events.shift();events.push(ev);dropped++;}};
+  const attach=(ev,detail)=>{ev.detail=detail.trim();ev.client=((detail.match(/\[CLIENT:\s*([^\]]+)\]/i)||[])[1]||"").trim();ev.user=(detail.match(/for user '([^']+)'/i)||[])[1]||"";ev.db=((detail.match(/database '([^']+)'/i)||detail.match(/Database:\s*([^,\n]+)/i)||[])[1]||"").trim();};
+  const onLine=line=>{const m=line.match(MSSQL_TS);if(!m)return;const t=parseTs(m[1]),source=m[2],msg=m[3];
+    if(!instance){const im=msg.match(/MSSQL[0-9]+\.([A-Za-z0-9_$]+)[\\/]/i)||msg.match(/\bserver name is '([^']+)'/i)||msg.match(/-s\s*"([A-Za-z0-9_$]+)"/);if(im)instance=im[1];}
+    const em=msg.match(/Error:\s*(\d+),\s*Severity:\s*(\d+),\s*State:\s*(\d+)/i);
+    const lineHit=clientHit(msg);
+    if(lineHit){total++;const isErr=/Error:\s*\d+,\s*Severity:\s*(1[1-9]|2[0-5])/i.test(msg);histAdd(hist,t,isErr?"err":"info");}
+    if(pendingErr){if(!em&&source===pendingErr.source){attach(pendingErr,msg);pendingErr._hit=pendingErr._hit||clientHit(msg);}
+      if((!CLIENT_ID||pendingErr._hit)&&(!IPF||ipHit(pendingErr.client)))push(pendingErr);pendingErr=null;}
+    if(em)pendingErr={t,ts:m[1],source,number:+em[1],severity:+em[2],state:+em[3],detail:"",client:"",user:"",db:"",_hit:lineHit};};
+  const boundary=()=>{if(pendingErr){if((!CLIENT_ID||pendingErr._hit)&&(!IPF||ipHit(pendingErr.client)))push(pendingErr);pendingErr=null;}};
+  streamFiles(files,onLine,boundary,onProgress).then(enc=>{
+    const severe=events.filter(e=>e.severity>=17).sort((a,b)=>(b.t&&a.t)?b.t-a.t:0);
+    const logins=events.filter(e=>e.number===18456);
+    const loginByIp=tallyTop(logins,e=>e.client||"(no client)",10),loginByState=tallyTop(logins,e=>String(e.state),8);
+    const byNumber=new Map();events.forEach(e=>{const x=byNumber.get(e.number)||{number:e.number,n:0,maxSev:0,ex:e};x.n++;x.maxSev=Math.max(x.maxSev,e.severity);byNumber.set(e.number,x);});
+    const codes=[...byNumber.values()].sort((a,b)=>b.maxSev-a.maxSev||b.n-a.n);
+    const hb=histBuckets(hist,["info","err"]);
+    resolve({entries:[],total,events,withT:[],buckets:hb.buckets,bucketMs:hb.bucketMs,t0:hb.t0,t1:hb.t1,severe,logins,loginByIp,loginByState,codes,deadlocks:events.filter(e=>e.number===1205).length,instance,nErr:events.filter(e=>e.severity>=11).length,enc,scanned:true,dropped});
+  }).catch(reject);
+});}
+function iisStream(files,onProgress){return new Promise((resolve,reject)=>{
+  let fields=null,idx={},total=0,dropped=0,ipCapped=false;const counts={2:0,3:0,4:0,5:0};
+  const failures=[],CAP=8000;const codeMap=new Map(),urlMap=new Map(),ipMap=new Map(),ipSet=new Set(),slow=[],hist=newHist();
+  const reindex=fs=>{idx={};fs.forEach((c,i)=>idx[c.toLowerCase()]=i);};
+  const onLine=line=>{if(!line)return;
+    if(line[0]==="#"){if(line.toLowerCase().startsWith("#fields:")){fields=line.slice(8).trim().split(/\s+/);reindex(fields);}return;}
+    if(!fields){fields="date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken".split(" ");reindex(fields);}
+    const p=line.split(/\s+/);if(p.length<fields.length-2)return;
+    const get=n=>{const i=idx[n];if(i==null)return "";const v=p[i];return(v==="-"||v==null)?"":v;};
+    const st=parseInt(get("sc-status"))||0;if(!st)return;
+    if(CLIENT_ID&&!clientHit(get("cs-uri-stem")+" "+get("cs-uri-query")))return;
+    if(IPF&&!ipHit(get("c-ip")))return;
+    const date=get("date"),time=get("time");let t=null;if(date&&time){const d=new Date(date+"T"+time+"Z");if(!isNaN(d))t=d;}
+    const rec={t,cIp:get("c-ip"),sIp:get("s-ip"),method:get("cs-method"),uri:get("cs-uri-stem"),query:get("cs-uri-query"),status:st,substatus:parseInt(get("sc-substatus"))||0,win32:parseInt(get("sc-win32-status"))||0,timeTaken:parseInt(get("time-taken"))||0,ua:get("cs(user-agent)")};
+    total++;const c=cls(st);if(counts[c]!=null)counts[c]++;histAdd(hist,t,c===2?"c2":c===3?"c3":c===4?"c4":"c5");
+    if(!ipCapped){if(ipSet.size<300000)ipSet.add(rec.cIp);else ipCapped=true;}
+    if(rec.timeTaken>0){if(slow.length<10){slow.push(rec);slow.sort((a,b)=>b.timeTaken-a.timeTaken);}else if(rec.timeTaken>slow[9].timeTaken){slow[9]=rec;slow.sort((a,b)=>b.timeTaken-a.timeTaken);}}
+    if(c>=4){const key=st+"."+rec.substatus;const e=codeMap.get(key)||{status:st,sub:rec.substatus,n:0};e.n++;codeMap.set(key,e);
+      const uk=rec.method+" "+rec.uri;urlMap.set(uk,(urlMap.get(uk)||0)+1);ipMap.set(rec.cIp,(ipMap.get(rec.cIp)||0)+1);
+      if(failures.length<CAP)failures.push(rec);else{failures.shift();failures.push(rec);dropped++;}}};
+  const boundary=()=>{fields=null;}; // each rotated IIS file re-declares its own #Fields header
+  streamFiles(files,onLine,boundary,onProgress).then(enc=>{
+    const hb=histBuckets(hist,["c2","c3","c4","c5"]);const b=hb.buckets;let incident=null,peak=-1,pv=0;
+    b.forEach((x,i)=>{if(x.c5>pv){pv=x.c5;peak=i;}});
+    if(pv>0){let a=peak,z=peak;const bad=x=>x>=0&&x<b.length&&b[x].c5>0&&b[x].c5>=b[x].c2*0.5;while(bad(a-1))a--;while(bad(z+1))z++;incident={from:b[a].t,to:new Date(+b[z].t+hb.bucketMs),count:0};for(let i=a;i<=z;i++)incident.count+=b[i].c5;}
+    resolve({recs:[],total,counts,failures,server:[],buckets:hb.buckets,bucketMs:hb.bucketMs,t0:hb.t0,t1:hb.t1,incident,
+      codes:[...codeMap.values()].sort((a,b)=>b.n-a.n),failUrls:[...urlMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10),
+      failIps:[...ipMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10),slow,totalIps:ipSet.size,ipCapped,enc,scanned:true,dropped});
+  }).catch(reject);
+});}
+
+let CUR_MODE=null,CUR_FILES=null,CUR_TEXT=null,CUR_META=null,BASE_NOTE="";
+function refreshClientBar(){$("#clientBar").classList.remove("hidden");
+  const showIp=CUR_MODE==="iis"||CUR_MODE==="mssql";$("#ipWrap").style.display=showIp?"flex":"none";
+  if(document.activeElement!==$("#clientIn"))$("#clientIn").value=CLIENT_RAW;
+  if(document.activeElement!==$("#ipIn"))$("#ipIn").value=IP_RAW;
+  $("#clientClear").classList.toggle("hidden",!(CLIENT_ID||IPF));
+  const parts=[];if(CLIENT_ID)parts.push(`<b>${esc(CLIENT_RAW)}</b>`);if(IPF)parts.push(`IP <b>${esc(IP_RAW)}</b>`);
+  $("#clientActive").innerHTML=parts.length?`<span class="cl-chip">showing only ${parts.join(" · ")}</span>`:"";}
+function postRender(hasData){const f=[];if(CLIENT_ID)f.push(`client “${CLIENT_RAW}”`);if(IPF)f.push(`IP “${IP_RAW}”`);const c=f.length?`Showing only ${f.join(" and ")}${hasData?"":" — no matching entries found"}. `:"";LAST_WARN=(c+BASE_NOTE).trim();warn(LAST_WARN);refreshClientBar();}
+function applyClientInput(){CLIENT_RAW=$("#clientIn").value.trim();CLIENT_ID=CLIENT_RAW.toLowerCase();IP_RAW=$("#ipIn").value.trim();IPF=IP_RAW.toLowerCase();reRunClient();}
+function reRunClient(){if(!CUR_MODE)return;if(CUR_MODE==="db")dbAnalyze();else runPipeline();}
+
+function runPipeline(){
+  const mode=CUR_MODE,meta=CUR_META,files=CUR_FILES,totalSize=meta.totalSize;
+  const fail=err=>{hideScan();alert("Couldn't process this file:\n\n"+(err&&err.message||err));};
+  const many=meta.files>1?` across ${meta.files} files`:"";
+  const pl=(n,w)=>num(n)+" "+w+(n===1?"":"s");
+  const mergeNote=meta.files>1?`Merged ${meta.files} files (${meta.size}) onto one timeline.`:"";
+  const finishSmall=text=>{try{CUR_TEXT=text;
+    if(mode==="iis"){IIS.rows=iisParse(text);if(!IIS.rows.length&&!CLIENT_ID){alert("No IIS request records found. Expected W3C extended format.");return;}IIS.A=iisAnalyze(IIS.rows);showReport();IIS_RECFILTER="all";iisRender({name:meta.name,size:meta.size});BASE_NOTE=mergeNote;postRender(IIS.A.total);}
+    else if(mode==="mssql"){const d=mssqlParse(text);if(!d.entries.length&&!CLIENT_ID){alert("No SQL Server log lines found. Expected ERRORLOG lines beginning with a timestamp.");return;}MSSQL.A=mssqlAnalyze(d);showReport();mssqlRender({name:meta.name,size:meta.size,enc:meta.enc});BASE_NOTE=mergeNote;postRender(MSSQL.A.total);}
+    else{const d=inovahParse(text);if(!d.entries.length&&!CLIENT_ID){alert("No iNovah log entries found. Expected entries separated by '====' lines with When / Category fields.");return;}INOVAH.A=inovahAnalyze(d);showReport();INOVAH_FILTER="all";INOVAH_SEARCH="";inovahRender({name:meta.name,size:meta.size,enc:meta.enc});BASE_NOTE=mergeNote;postRender(INOVAH.A.total);}
+  }catch(err){fail(err);}};
+  if(CUR_TEXT!=null){finishSmall(CUR_TEXT);return;}
+  if(totalSize>TEXT_CAP){ // large → stream whole log(s), keep only problems
+    showScan(`Scanning ${meta.files>1?meta.files+" logs":"log"} (${meta.size})…`);const prog=(done,tot)=>setScan(done/tot);
+    if(mode==="inovah"){inovahStream(files,prog).then(A=>{hideScan();if(!A.total&&!CLIENT_ID){alert("No iNovah log entries found. Expected entries separated by '====' lines.");return;}INOVAH.A=A;meta.enc=A.enc;showReport();INOVAH_FILTER="all";INOVAH_SEARCH="";inovahRender({name:meta.name,size:meta.size,enc:A.enc});BASE_NOTE=`Scanned the whole log${many} (${num(A.total)} entries) and kept every problem: ${pl(A.errCount,"error")}, ${pl(A.warnCount,"warning")}.`+(A.dropped?` The list shows the most recent ${num(A.issues.length)}; ${num(A.dropped)} older problems are counted above but not listed.`:"");postRender(A.total);}).catch(fail);return;}
+    if(mode==="mssql"){mssqlStream(files,prog).then(A=>{hideScan();if(!A.total&&!CLIENT_ID){alert("No SQL Server log lines found.");return;}MSSQL.A=A;meta.enc=A.enc;showReport();mssqlRender({name:meta.name,size:meta.size,enc:A.enc});BASE_NOTE=`Scanned the whole log${many} (${num(A.total)} lines) and kept every error event (${num(A.events.length)}${A.dropped?` of ${num(A.events.length+A.dropped)}`:""}). Totals and timeline reflect everything.`;postRender(A.total);}).catch(fail);return;}
+    iisStream(files,prog).then(A=>{hideScan();if(!A.total&&!CLIENT_ID){alert("No IIS request records found. Expected W3C extended format.");return;}IIS.A=A;showReport();IIS_RECFILTER="all";iisRender({name:meta.name,size:meta.size});BASE_NOTE=`Scanned all ${num(A.total)} requests${many}; totals and timeline reflect the whole log and every 4xx/5xx is captured${A.dropped?` (most recent ${num(A.failures.length)} listed)`:""}.`;postRender(A.total);}).catch(fail);return;
+  }
+  readAllText(files).then(({text,enc})=>{meta.enc=enc;finishSmall(text);}).catch(err=>alert("Couldn't read that file:\n\n"+(err&&err.message||err)));
+}
+
+async function sniffMode(f){
+  try{const u8=await readSlice(f,0,Math.min(f.size,8192));
+    if(u8.length>=15&&String.fromCharCode.apply(null,u8.slice(0,15))==="SQLite format 3")return "db";
+    const t=decodeBytes(u8);
+    if(/^#Software: Microsoft Internet Information Services|^#Fields:.*\bsc-status\b/m.test(t))return "iis";
+    if(/iNovah Instance:/i.test(t)||(/^\s*When:\s/m.test(t)&&/^\s*Category:\s/m.test(t)))return "inovah";
+    if(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{2,3}\s+(Server|spid\d+s?|Logon|Backup)\b/m.test(t))return "mssql";
+    if(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \S+ (GET|POST|PUT|HEAD|DELETE|OPTIONS|PATCH) /m.test(t))return "iis";
+  }catch(e){}
+  return null;
+}
+async function autoLoad(files){
+  files=[...files].filter(f=>f&&!/-(wal|shm|journal)$/i.test(f.name));if(!files.length)return;
+  const m=await sniffMode(files[0]);
+  if(!m){alert("Couldn't tell what kind of log \""+files[0].name+"\" is.\n\nDrop it on the matching card instead.");return;}
+  loadFiles(m,files,true);
+}
+async function loadFiles(mode,files,skipSniff){
+  files=[...files].filter(Boolean); if(!files.length)return;
+  if(!skipSniff){const det=await sniffMode(files.find(f=>!/-(wal|shm|journal)$/i.test(f.name))||files[0]);
+    if(det&&det!==mode&&confirm(`This looks like a ${MODE_NAMES[det]}, not a ${MODE_NAMES[mode]}.\n\nOpen it as a ${MODE_NAMES[det]} instead?`))mode=det;}
+  CLIENT_ID="";CLIENT_RAW="";IPF="";IP_RAW="";BASE_NOTE="";clearPicks();
+  const totalSize=files.reduce((a,f)=>a+f.size,0);
+  CUR_MODE=mode;CUR_FILES=files;CUR_TEXT=null;
+  CUR_META={name:files.length>1?`${files.length} files`:files[0].name,size:humanSize(totalSize),files:files.length,totalSize,enc:"UTF-8"};
+  if(mode==="db"){const mains=files.filter(f=>!/-(wal|shm|journal)$/i.test(f.name));
+    if(mains.length>1)setTimeout(()=>alert("Multiple databases were dropped — analyzing the first one only. SQLite files can't be merged."),0);
+    const f=mains[0]||files[0],rd=new FileReader();
+    rd.onload=()=>{try{DB.db=openSQLite(new Uint8Array(rd.result));}catch(err){alert("Couldn't read this database.\n\n"+err.message);return;}
+      if(!DB.db.tables.length){alert("No tables found in this database.");return;}
+      DB.table=pickDbTable(DB.db.tables);DB.rows=DB.db.rowsAsObjects(DB.table);setBrand("E-Commerce logs","e-commerce notification lifecycle");fileMeta(f.name,humanSize(f.size),DB.rows.length+" rows");
+      BASE_NOTE=DB.db.wal?"Database is in WAL mode. This reads the main .db only — newest uncommitted rows may be missing. Checkpoint or copy after stopping writes for a complete snapshot.":"";
+      showReport();dbBuildMapping();dbAnalyze();};
+    rd.onerror=()=>alert("Couldn't read that database file.");rd.readAsArrayBuffer(f);return;}
+  runPipeline();
+}
+function pickDbTable(tables){let best=null,bs=-1;for(const t of tables){let s=0;if(t.columns.some(c=>/request|correlation|event|notif|trace/i.test(c)))s+=3;if(t.columns.some(c=>/level|severity/i.test(c)))s+=3;if(t.columns.some(c=>/message|msg|text|detail/i.test(c)))s+=2;if(t.columns.some(c=>/time|date/i.test(c)))s+=2;if(s>bs){bs=s;best=t;}}return best||tables[0];}
+
+// wire home cards
+document.querySelectorAll("[data-open]").forEach(b=>b.onclick=e=>{e.stopPropagation();openPicker(b.dataset.open);});
+$("#clientApply").onclick=applyClientInput;
+$("#pickCopy").onclick=copyExport;
+$("#pickDownload").onclick=downloadExport;
+$("#pickClear").onclick=clearPicks;
+$("#clientIn").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();applyClientInput();}});
+$("#ipIn").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();applyClientInput();}});
+$("#clientClear").onclick=()=>{CLIENT_RAW="";CLIENT_ID="";IP_RAW="";IPF="";$("#clientIn").value="";$("#ipIn").value="";reRunClient();};
+document.querySelectorAll("[data-sample]").forEach(b=>b.onclick=e=>{e.stopPropagation();loadSample(b.dataset.sample);});
+document.querySelectorAll(".mode").forEach(m=>m.onclick=()=>openPicker(m.dataset.mode));
+// Stop the browser from navigating to a file dropped anywhere on the page.
+["dragenter","dragover"].forEach(ev=>window.addEventListener(ev,e=>e.preventDefault(),false));
+window.addEventListener("drop",e=>e.preventDefault(),false);
+// Delegated drag/drop on the home area — works when releasing over a card OR any child of it.
+const home=$("#home");
+function clearHot(){document.querySelectorAll(".mode").forEach(x=>x.classList.remove("hot"));}
+home.addEventListener("dragover",e=>{e.preventDefault();const m=e.target.closest?e.target.closest(".mode"):null;document.querySelectorAll(".mode").forEach(x=>x.classList.toggle("hot",x===m));});
+home.addEventListener("dragleave",e=>{if(!e.relatedTarget||!home.contains(e.relatedTarget))clearHot();});
+home.addEventListener("drop",e=>{e.preventDefault();clearHot();const m=e.target.closest?e.target.closest(".mode"):null;const fs=e.dataTransfer&&e.dataTransfer.files?[...e.dataTransfer.files]:[];if(!fs.length)return;if(m)loadFiles(m.dataset.mode,fs);else autoLoad(fs);});
+window.addEventListener("resize",()=>drawTL());
+function copyText(text,btn){const ok=()=>{const o=btn.textContent;btn.textContent="Copied ✓";setTimeout(()=>btn.textContent=o,1600);};
+  if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(text).then(ok).catch(()=>fallbackCopy(text,ok));else fallbackCopy(text,ok);}
+function whereHTML(L){
+  const phPath=x=>esc(x).replace(/&lt;([A-Za-z0-9_ -]+)&gt;/g,'<span class="ph">&lt;$1&gt;</span>').replace(/\\/g,'\\<wbr>');
+  const phHtml=x=>String(x||"").replace(/<(?!\/?(?:b|i|code)>)([A-Za-z0-9_ -]+)>/g,'<span class="ph">&lt;$1&gt;</span>');
+  return (L.sections||[]).map(sec=>{const unset=/^\(/.test(sec.path);
+      return `<div class="wsec">${sec.label?`<div class="wlbl">${esc(sec.label)}</div>`:""}<div class="wpath${unset?" unset":""}"><code>${phPath(sec.path)}</code>${unset?"":`<button class="wcopy" data-copy="${esc(sec.path)}">Copy</button>`}</div>${sec.files?`<div class="wfiles">Files: ${phHtml(sec.files)}</div>`:""}</div>`;}).join("")
+    +(L.tips&&L.tips.length?`<ul class="wtips">${L.tips.map(t=>`<li>${phHtml(t)}</li>`).join("")}</ul>`:"")
+    +`<div class="wfiles" style="margin-top:6px;color:var(--tx-faint)">Tip: paste a path into File Explorer's address bar, then replace the highlighted parts.</div>`;}
+function renderWhere(){
+  $("#otherLogs").innerHTML=OTHER_LOCATIONS.map(o=>`<div class="ocard"><h4>${esc(o.name)}</h4><p>${esc(o.desc||"")}</p><details class="where"><summary>Where to find these logs</summary><div class="wbody">${whereHTML(o)}</div></details></div>`).join("");
+  document.querySelectorAll(".mode details.where").forEach(d=>{const L=LOG_LOCATIONS[d.dataset.where];if(L)d.querySelector(".wbody").innerHTML=whereHTML(L);});
+  document.querySelectorAll("details.where").forEach(d=>d.addEventListener("click",e=>{e.stopPropagation();const b=e.target.closest(".wcopy");if(b)copyText(b.dataset.copy,b);}));}
+renderWhere();
+
+/* ===================== samples ===================== */
+function loadSample(mode){
+  CLIENT_ID="";CLIENT_RAW="";IPF="";IP_RAW="";BASE_NOTE="";clearPicks();
+  if(mode==="db"){const bin=atob(SAMPLE_DB_B64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+    DB.db=openSQLite(arr);DB.table=pickDbTable(DB.db.tables);DB.rows=DB.db.rowsAsObjects(DB.table);CUR_MODE="db";CUR_FILES=null;CUR_TEXT=null;CUR_META={name:"sample-notifications.db",size:humanSize(arr.length),files:1};setBrand("E-Commerce logs","e-commerce notification lifecycle");fileMeta("sample-notifications.db",humanSize(arr.length),DB.rows.length+" rows");showReport();dbBuildMapping();dbAnalyze();return;}
+  let text,name;
+  if(mode==="mssql"){text=SAMPLE_MSSQL;name="sample-ERRORLOG";}
+  else if(mode==="inovah"){text=SAMPLE_INOVAH;name="sample-AdminMgmtPortal.txt";}
+  else{text=makeSampleIIS();name="sample-app-pool-crash.log";}
+  CUR_MODE=mode;CUR_FILES=null;CUR_META={name,size:humanSize(text.length),files:1,enc:"UTF-8"};CUR_TEXT=text;runPipeline();
+}
+function makeSampleIIS(){
+  const fields="date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) sc-status sc-substatus sc-win32-status time-taken";
+  let out=["#Software: Microsoft Internet Information Services 10.0","#Version: 1.0","#Fields: "+fields];
+  const paths=[["GET","/","-"],["GET","/products","cat=hardware"],["GET","/api/orders","id=8841"],["POST","/api/checkout","-"],["GET","/about","-"],["GET","/api/inventory","sku=X12"]];
+  const ips=["203.0.113.24","198.51.100.7","203.0.113.99","198.51.100.212","192.0.2.44"];const ua="Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64)";
+  const start=Date.UTC(2026,8,15,13,0,0),pad=n=>String(n).padStart(2,"0");
+  const line=(d,ip,m,u,q,st,sub,tt)=>{const D=new Date(d);return `${D.getUTCFullYear()}-${pad(D.getUTCMonth()+1)}-${pad(D.getUTCDate())} ${pad(D.getUTCHours())}:${pad(D.getUTCMinutes())}:${pad(D.getUTCSeconds())} 10.0.0.5 ${m} ${u} ${q} 443 - ${ip} ${ua} ${st} ${sub} 0 ${tt}`;};
+  let t=start;
+  for(let s=0;s<1200;s+=2+Math.floor(Math.random()*4)){const p=paths[Math.floor(Math.random()*paths.length)],ip=ips[Math.floor(Math.random()*ips.length)];let st=200,sub=0,tt=20+Math.floor(Math.random()*120);if(Math.random()<0.03)st=404;else if(Math.random()<0.02)st=302;out.push(line(t+s*1000,ip,p[0],p[1],p[2],st,sub,tt));}
+  t+=1200000;
+  for(let s=0;s<360;s+=1+Math.floor(Math.random()*3)){const p=paths[Math.floor(Math.random()*paths.length)],ip=ips[Math.floor(Math.random()*ips.length)];let st,sub,tt;const r=Math.random();if(r<0.7){st=503;sub=0;tt=0;}else if(r<0.9){st=502;sub=3;tt=30000+Math.floor(Math.random()*5000);}else{st=500;sub=0;tt=5000+Math.floor(Math.random()*8000);}out.push(line(t+s*1000,ip,p[0],p[1],p[2],st,sub,tt));}
+  t+=360000;
+  for(let s=0;s<840;s+=2+Math.floor(Math.random()*4)){const p=paths[Math.floor(Math.random()*paths.length)],ip=ips[Math.floor(Math.random()*ips.length)];let st=200,sub=0,tt=25+Math.floor(Math.random()*140);if(Math.random()<0.04)st=404;else if(Math.random()<0.015){st=401;sub=3;}out.push(line(t+s*1000,ip,p[0],p[1],p[2],st,sub,tt));}
+  return out.join("\n");
+}
+const SAMPLE_MSSQL="2026-09-15 13:00:00.12 Server      Microsoft SQL Server 2019 (RTM-CU18-GDR) (KB5021124) - 15.0.4261.1 (X64)\n2026-09-15 13:00:00.05 Server      Logging SQL Server messages in file 'C:\\Program Files\\Microsoft SQL Server\\MSSQL15.ORBIPAYSQL\\MSSQL\\Log\\ERRORLOG'.\n2026-09-15 13:00:00.15 Server      SQL Server is starting at normal priority base (=7). This is an informational message only.\n2026-09-15 13:00:00.40 spid9s      Starting up database 'master'.\n2026-09-15 13:00:02.10 spid61      Starting up database 'OrbiPay'.\n2026-09-15 13:01:05.33 Logon       Error: 18456, Severity: 14, State: 8.\n2026-09-15 13:01:05.33 Logon       Login failed for user 'appuser'. Reason: Password did not match that for the login provided. [CLIENT: 10.0.2.55]\n2026-09-15 13:01:06.01 Logon       Error: 18456, Severity: 14, State: 8.\n2026-09-15 13:01:06.01 Logon       Login failed for user 'appuser'. Reason: Password did not match that for the login provided. [CLIENT: 10.0.2.55]\n2026-09-15 13:03:30.00 Logon       Error: 18456, Severity: 14, State: 5.\n2026-09-15 13:03:30.00 Logon       Login failed for user 'sa'. Reason: Could not find a login matching the name provided. [CLIENT: 203.0.113.9]\n2026-09-15 13:04:00.00 Logon       Error: 18456, Severity: 14, State: 58.\n2026-09-15 13:04:00.00 Logon       Login failed for user 'reportsvc'. Reason: An attempt to login using SQL authentication failed. Server is configured for Integrated authentication only. [CLIENT: 10.0.2.60]\n2026-09-15 13:05:22.71 spid72      Error: 1205, Severity: 13, State: 45.\n2026-09-15 13:05:22.71 spid72      Transaction (Process ID 72) was deadlocked on lock resources with another process and has been chosen as the deadlock victim. Rerun the transaction.\n2026-09-15 13:06:00.00 spid38s     Error: 41022, Severity: 16, State: 0.\n2026-09-15 13:06:00.00 spid38s     Failed to create a Windows Server Failover Clustering (WSFC) notification port with notification filter 778567686 and notification key 3 (Error code 5073). If this is a WSFC availability group, the WSFC service may not be running or may not be accessible in its current state.\n2026-09-15 13:10:00.00 spid55      Error: 9002, Severity: 17, State: 2.\n2026-09-15 13:10:00.00 spid55      The transaction log for database 'OrbiPay' is full due to 'ACTIVE_TRANSACTION'.\n2026-09-15 13:15:00.00 Backup      Database backed up. Database: OrbiPay, creation date(time): 2026/01/02, pages dumped: 3355\n2026-09-15 13:20:00.00 spid90      Error: 823, Severity: 24, State: 2.\n2026-09-15 13:20:00.00 spid90      The operating system returned error 21(The device is not ready.) to SQL Server during a read at offset 0x000abc in file 'D:\\Data\\OrbiPay.mdf'. Additional messages in the error log may provide more detail.\n";
+const SAMPLE_DB_B64="U1FMaXRlIGZvcm1hdCAzABAAAQEAQCAgAAAAAgAAAAcAAAAAAAAAAAAAAAEAAAAEAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAC52iQ0AAAACDuEADzMO4QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQAgYXKysBWXRhYmxlc3FsaXRlX3NlcXVlbmNlc3FsaXRlX3NlcXVlbmNlA0NSRUFURSBUQUJMRSBzcWxpdGVfc2VxdWVuY2UobmFtZSxzZXEpgUoBBxcTEwGCe3RhYmxlTG9nTG9nAkNSRUFURSBUQUJMRSBMb2coCiBJZCBJTlRFR0VSIFBSSU1BUlkgS0VZIEFVVE9JTkNSRU1FTlQsIFByb2Nlc3NJZCBJTlRFR0VSLCBUaHJlYWRJZCBJTlRFR0VSLAogUmVxdWVzdElkIFRFWFQsIFRpbWVzdGFtcCBURVhULCBMb2dMZXZlbCBURVhULCBMb2dnZXIgVEVYVCwgQ2FsbHNpdGUgVEVYVCwgTWVzc2FnZSBURVhUKQUAAAACD/YAAAAABw/7D/YAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAU3AAAABCANAAAAAQ/3AA/3AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwEDEwFMb2c/DQAAACAAxgAPeg8SDpIODA2kDSQMngw2C7YLMArICkgJwglaCNoIVAfsB2wG5gZ+Bf4FeAUQBJAECgOiAyICnAI0AbQBLgDGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZiAKAAIBHz0XMRdFBNIUb3JiaS0yMDEwMjAyNi0wOS0xNSAxMzowMDoxMS4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAyIGxpbmUgaXRlbXOBAx8KAAIBHz0VNRt5BNIUb3JiaS0yMDEwMjAyNi0wOS0xNSAxMzowMDoxMS4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTExMH4eCgACAR89FTEVeQTSFG9yYmktMjAwOTIwMjYtMDktMTUgMTM6MDA6MTAuNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZh0KAAIBHz0XMRdFBNIUb3JiaS0yMDA5MjAyNi0wOS0xNSAxMzowMDoxMC4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAxIGxpbmUgaXRlbXOBAxwKAAIBHz0VNRt5BNIUb3JiaS0yMDA5MjAyNi0wOS0xNSAxMzowMDoxMC4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwOX4bCgACAR89FTEVeQTSFG9yYmktMjAwODIwMjYtMDktMTUgMTM6MDA6MDkuNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZhoKAAIBHz0XMRdFBNIUb3JiaS0yMDA4MjAyNi0wOS0xNSAxMzowMDowOS4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAzIGxpbmUgaXRlbXOBAxkKAAIBHz0VNRt5BNIUb3JiaS0yMDA4MjAyNi0wOS0xNSAxMzowMDowOS4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwOH4YCgACAR89FTEVeQTSFG9yYmktMjAwNzIwMjYtMDktMTUgMTM6MDA6MDguNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZhcKAAIBHz0XMRdFBNIUb3JiaS0yMDA3MjAyNi0wOS0xNSAxMzowMDowOC4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAyIGxpbmUgaXRlbXOBAxYKAAIBHz0VNRt5BNIUb3JiaS0yMDA3MjAyNi0wOS0xNSAxMzowMDowOC4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwN34VCgACAR89FTEVeQTSFG9yYmktMjAwNjIwMjYtMDktMTUgMTM6MDA6MDcuNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZhQKAAIBHz0XMRdFBNIUb3JiaS0yMDA2MjAyNi0wOS0xNSAxMzowMDowNy4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAxIGxpbmUgaXRlbXOBAxMKAAIBHz0VNRt5BNIUb3JiaS0yMDA2MjAyNi0wOS0xNSAxMzowMDowNy4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwNn4SCgACAR89FTEVeQTSFG9yYmktMjAwNTIwMjYtMDktMTUgMTM6MDA6MDYuNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZhEKAAIBHz0XMRdFBNIUb3JiaS0yMDA1MjAyNi0wOS0xNSAxMzowMDowNi4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAzIGxpbmUgaXRlbXOBAxAKAAIBHz0VNRt5BNIUb3JiaS0yMDA1MjAyNi0wOS0xNSAxMzowMDowNi4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwNX4PCgACAR89FTEVeQTSFG9yYmktMjAwNDIwMjYtMDktMTUgMTM6MDA6MDUuNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZg4KAAIBHz0XMRdFBNIUb3JiaS0yMDA0MjAyNi0wOS0xNSAxMzowMDowNS4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAyIGxpbmUgaXRlbXOBAw0KAAIBHz0VNRt5BNIUb3JiaS0yMDA0MjAyNi0wOS0xNSAxMzowMDowNS4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwNH4MCgACAR89FTEVeQTSFG9yYmktMjAwMzIwMjYtMDktMTUgMTM6MDA6MDQuNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZgsKAAIBHz0XMRdFBNIUb3JiaS0yMDAzMjAyNi0wOS0xNSAxMzowMDowNC4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAxIGxpbmUgaXRlbXOBAwoKAAIBHz0VNRt5BNIUb3JiaS0yMDAzMjAyNi0wOS0xNSAxMzowMDowNC4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwM34JCgACAR89FTEVeQTSFG9yYmktMjAwMjIwMjYtMDktMTUgMTM6MDA6MDMuNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZggKAAIBHz0XMRdFBNIUb3JiaS0yMDAyMjAyNi0wOS0xNSAxMzowMDowMy4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAzIGxpbmUgaXRlbXOBAwcKAAIBHz0VNRt5BNIUb3JiaS0yMDAyMjAyNi0wOS0xNSAxMzowMDowMy4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwMn4GCgACAR89FTEVeQTSFG9yYmktMjAwMTIwMjYtMDktMTUgMTM6MDA6MDIuNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZgUKAAIBHz0XMRdFBNIUb3JiaS0yMDAxMjAyNi0wOS0xNSAxMzowMDowMi4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAyIGxpbmUgaXRlbXOBAwQKAAIBHz0VNRt5BNIUb3JiaS0yMDAxMjAyNi0wOS0xNSAxMzowMDowMi4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwMX4DCgACAR89FTEVeQTSFG9yYmktMjAwMDIwMjYtMDktMTUgMTM6MDA6MDEuNDAwMEluZm9PcmJpLk5vdGlmeS5TZW5kZXJTZW5kTm90aWZpY2F0aW9uIGRlbGl2ZXJlZCB0byBjbGllbnQgZW5kcG9pbnQsIEhUVFAgMjAwIE9LZgIKAAIBHz0XMRdFBNIUb3JiaS0yMDAwMjAyNi0wOS0xNSAxMzowMDowMS4yMDAwRGVidWdPcmJpLk5vdGlmeS5QYXJzZXJQYXJzZVBhcnNlZCBwYXlsb2FkLCAxIGxpbmUgaXRlbXOBAwEKAAIBHz0VNRt5BNIUb3JiaS0yMDAwMjAyNi0wOS0xNSAxMzowMDowMS4wMDAwSW5mb09yYmkuTm90aWZ5LlJlY2VpdmVyUmVjZWl2ZU5vdGlmaWNhdGlvbiByZWNlaXZlZCBmcm9tIE9yYmlQYXkgZm9yIHBheW1lbnQgUE1ULTEwMA0AAAAXBPgAD4AO+g6SDhINjA0kDKQMHgu2CzYKsApICcgJQgjaCFoH1AdsBuwGZgX+BX4E+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIEDNwoAAgEfPRU1G3kE0hRvcmJpLTMwMDEyMDI2LTA5LTE1IDEzOjAwOjIwLjAwMDBJbmZvT3JiaS5Ob3RpZnkuUmVjZWl2ZXJSZWNlaXZlTm90aWZpY2F0aW9uIHJlY2VpdmVkIGZyb20gT3JiaVBheSBmb3IgcGF5bWVudCBQTVQtMjAxfjYKAAIBHz0VMRV5BNIUb3JiaS0yMDE3MjAyNi0wOS0xNSAxMzowMDoxOC40MDAwSW5mb09yYmkuTm90aWZ5LlNlbmRlclNlbmROb3RpZmljYXRpb24gZGVsaXZlcmVkIHRvIGNsaWVudCBlbmRwb2ludCwgSFRUUCAyMDAgT0tmNQoAAgEfPRcxF0UE0hRvcmJpLTIwMTcyMDI2LTA5LTE1IDEzOjAwOjE4LjIwMDBEZWJ1Z09yYmkuTm90aWZ5LlBhcnNlclBhcnNlUGFyc2VkIHBheWxvYWQsIDMgbGluZSBpdGVtc4EDNAoAAgEfPRU1G3kE0hRvcmJpLTIwMTcyMDI2LTA5LTE1IDEzOjAwOjE4LjAwMDBJbmZvT3JiaS5Ob3RpZnkuUmVjZWl2ZXJSZWNlaXZlTm90aWZpY2F0aW9uIHJlY2VpdmVkIGZyb20gT3JiaVBheSBmb3IgcGF5bWVudCBQTVQtMTE3fjMKAAIBHz0VMRV5BNIUb3JiaS0yMDE2MjAyNi0wOS0xNSAxMzowMDoxNy40MDAwSW5mb09yYmkuTm90aWZ5LlNlbmRlclNlbmROb3RpZmljYXRpb24gZGVsaXZlcmVkIHRvIGNsaWVudCBlbmRwb2ludCwgSFRUUCAyMDAgT0tmMgoAAgEfPRcxF0UE0hRvcmJpLTIwMTYyMDI2LTA5LTE1IDEzOjAwOjE3LjIwMDBEZWJ1Z09yYmkuTm90aWZ5LlBhcnNlclBhcnNlUGFyc2VkIHBheWxvYWQsIDIgbGluZSBpdGVtc4EDMQoAAgEfPRU1G3kE0hRvcmJpLTIwMTYyMDI2LTA5LTE1IDEzOjAwOjE3LjAwMDBJbmZvT3JiaS5Ob3RpZnkuUmVjZWl2ZXJSZWNlaXZlTm90aWZpY2F0aW9uIHJlY2VpdmVkIGZyb20gT3JiaVBheSBmb3IgcGF5bWVudCBQTVQtMTE2fjAKAAIBHz0VMRV5BNIUb3JiaS0yMDE1MjAyNi0wOS0xNSAxMzowMDoxNi40MDAwSW5mb09yYmkuTm90aWZ5LlNlbmRlclNlbmROb3RpZmljYXRpb24gZGVsaXZlcmVkIHRvIGNsaWVudCBlbmRwb2ludCwgSFRUUCAyMDAgT0tmLwoAAgEfPRcxF0UE0hRvcmJpLTIwMTUyMDI2LTA5LTE1IDEzOjAwOjE2LjIwMDBEZWJ1Z09yYmkuTm90aWZ5LlBhcnNlclBhcnNlUGFyc2VkIHBheWxvYWQsIDEgbGluZSBpdGVtc4EDLgoAAgEfPRU1G3kE0hRvcmJpLTIwMTUyMDI2LTA5LTE1IDEzOjAwOjE2LjAwMDBJbmZvT3JiaS5Ob3RpZnkuUmVjZWl2ZXJSZWNlaXZlTm90aWZpY2F0aW9uIHJlY2VpdmVkIGZyb20gT3JiaVBheSBmb3IgcGF5bWVudCBQTVQtMTE1fi0KAAIBHz0VMRV5BNIUb3JiaS0yMDE0MjAyNi0wOS0xNSAxMzowMDoxNS40MDAwSW5mb09yYmkuTm90aWZ5LlNlbmRlclNlbmROb3RpZmljYXRpb24gZGVsaXZlcmVkIHRvIGNsaWVudCBlbmRwb2ludCwgSFRUUCAyMDAgT0tmLAoAAgEfPRcxF0UE0hRvcmJpLTIwMTQyMDI2LTA5LTE1IDEzOjAwOjE1LjIwMDBEZWJ1Z09yYmkuTm90aWZ5LlBhcnNlclBhcnNlUGFyc2VkIHBheWxvYWQsIDMgbGluZSBpdGVtc4EDKwoAAgEfPRU1G3kE0hRvcmJpLTIwMTQyMDI2LTA5LTE1IDEzOjAwOjE1LjAwMDBJbmZvT3JiaS5Ob3RpZnkuUmVjZWl2ZXJSZWNlaXZlTm90aWZpY2F0aW9uIHJlY2VpdmVkIGZyb20gT3JiaVBheSBmb3IgcGF5bWVudCBQTVQtMTE0fioKAAIBHz0VMRV5BNIUb3JiaS0yMDEzMjAyNi0wOS0xNSAxMzowMDoxNC40MDAwSW5mb09yYmkuTm90aWZ5LlNlbmRlclNlbmROb3RpZmljYXRpb24gZGVsaXZlcmVkIHRvIGNsaWVudCBlbmRwb2ludCwgSFRUUCAyMDAgT0tmKQoAAgEfPRcxF0UE0hRvcmJpLTIwMTMyMDI2LTA5LTE1IDEzOjAwOjE0LjIwMDBEZWJ1Z09yYmkuTm90aWZ5LlBhcnNlclBhcnNlUGFyc2VkIHBheWxvYWQsIDIgbGluZSBpdGVtc4EDKAoAAgEfPRU1G3kE0hRvcmJpLTIwMTMyMDI2LTA5LTE1IDEzOjAwOjE0LjAwMDBJbmZvT3JiaS5Ob3RpZnkuUmVjZWl2ZXJSZWNlaXZlTm90aWZpY2F0aW9uIHJlY2VpdmVkIGZyb20gT3JiaVBheSBmb3IgcGF5bWVudCBQTVQtMTEzficKAAIBHz0VMRV5BNIUb3JiaS0yMDEyMjAyNi0wOS0xNSAxMzowMDoxMy40MDAwSW5mb09yYmkuTm90aWZ5LlNlbmRlclNlbmROb3RpZmljYXRpb24gZGVsaXZlcmVkIHRvIGNsaWVudCBlbmRwb2ludCwgSFRUUCAyMDAgT0tmJgoAAgEfPRcxF0UE0hRvcmJpLTIwMTIyMDI2LTA5LTE1IDEzOjAwOjEzLjIwMDBEZWJ1Z09yYmkuTm90aWZ5LlBhcnNlclBhcnNlUGFyc2VkIHBheWxvYWQsIDEgbGluZSBpdGVtc4EDJQoAAgEfPRU1G3kE0hRvcmJpLTIwMTIyMDI2LTA5LTE1IDEzOjAwOjEzLjAwMDBJbmZvT3JiaS5Ob3RpZnkuUmVjZWl2ZXJSZWNlaXZlTm90aWZpY2F0aW9uIHJlY2VpdmVkIGZyb20gT3JiaVBheSBmb3IgcGF5bWVudCBQTVQtMTEyfiQKAAIBHz0VMRV5BNIUb3JiaS0yMDExMjAyNi0wOS0xNSAxMzowMDoxMi40MDAwSW5mb09yYmkuTm90aWZ5LlNlbmRlclNlbmROb3RpZmljYXRpb24gZGVsaXZlcmVkIHRvIGNsaWVudCBlbmRwb2ludCwgSFRUUCAyMDAgT0tmIwoAAgEfPRcxF0UE0hRvcmJpLTIwMTEyMDI2LTA5LTE1IDEzOjAwOjEyLjIwMDBEZWJ1Z09yYmkuTm90aWZ5LlBhcnNlclBhcnNlUGFyc2VkIHBheWxvYWQsIDMgbGluZSBpdGVtc4EDIgoAAgEfPRU1G3kE0hRvcmJpLTIwMTEyMDI2LTA5LTE1IDEzOjAwOjEyLjAwMDBJbmZvT3JiaS5Ob3RpZnkuUmVjZWl2ZXJSZWNlaXZlTm90aWZpY2F0aW9uIHJlY2VpdmVkIGZyb20gT3JiaVBheSBmb3IgcGF5bWVudCBQTVQtMTExfiEKAAIBHz0VMRV5BNIUb3JiaS0yMDEwMjAyNi0wOS0xNSAxMzowMDoxMS40MDAwSW5mb09yYmkuTm90aWZ5LlNlbmRlclNlbmROb3RpZmljYXRpb24gZGVsaXZlcmVkIHRvIGNsaWVudCBlbmRwb2ludCwgSFRUUCAyMDAgT0sAAAAAY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKDQAAAAgAdAAEDgOIAyACmgIDAX0BCAB0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACBET8LAAIBHz0XMR+BEQTSFG9yYmktMzAwNDIwMjYtMDktMTUgMTM6MDA6NTguMDAwMEVycm9yT3JiaS5Ob3RpZnkuU2VuZGVyU2VuZEFzeW5jRmFpbGVkIHRvIHNlbmQgbm90aWZpY2F0aW9uOiByZXF1ZXN0IHRpbWVvdXQsIGVuZHBvaW50IHVucmVhY2hhYmxlcz4KAAIBHz0VMR9ZBNIUb3JiaS0zMDA0MjAyNi0wOS0xNSAxMzowMDoyOC4wMDAwV2Fybk9yYmkuTm90aWZ5LlNlbmRlclNlbmRBc3luY1NlbmQgYXR0ZW1wdCAxIHRpbWVkIG91dCBhZnRlciAzMDAwMG1zgQM9CgACAR89FTUbeQTSFG9yYmktMzAwNDIwMjYtMDktMTUgMTM6MDA6MjcuMDAwMEluZm9PcmJpLk5vdGlmeS5SZWNlaXZlclJlY2VpdmVOb3RpZmljYXRpb24gcmVjZWl2ZWQgZnJvbSBPcmJpUGF5IGZvciBwYXltZW50IFBNVC0yMDSBFDwLAAIBHz0XKRWBKQTSFG9yYmktMzAwMzIwMjYtMDktMTUgMTM6MDA6MjUuMDAwMEZhdGFsT3JiaS5Ob3RpZnkuRGJTYXZlVW5oYW5kbGVkIGV4Y2VwdGlvbjogZGF0YWJhc2UgaXMgbG9ja2VkLCBjb3VsZCBub3QgcGVyc2lzdCBub3RpZmljYXRpb24gcmVjb3JkgQM7CgACAR89FTUbeQTSFG9yYmktMzAwMzIwMjYtMDktMTUgMTM6MDA6MjQuMDAwMEluZm9PcmJpLk5vdGlmeS5SZWNlaXZlclJlY2VpdmVOb3RpZmljYXRpb24gcmVjZWl2ZWQgZnJvbSBPcmJpUGF5IGZvciBwYXltZW50IFBNVC0yMDNmOgoAAgEfPRcxF0UE0hRvcmJpLTMwMDIyMDI2LTA5LTE1IDEzOjAwOjIyLjYwMDBEZWJ1Z09yYmkuTm90aWZ5LlBhcnNlclBhcnNlUGFyc2VkIHBheWxvYWQsIDIgbGluZSBpdGVtc4EDOQoAAgEfPRU1G3kE0hRvcmJpLTMwMDIyMDI2LTA5LTE1IDEzOjAwOjIyLjAwMDBJbmZvT3JiaS5Ob3RpZnkuUmVjZWl2ZXJSZWNlaXZlTm90aWZpY2F0aW9uIHJlY2VpdmVkIGZyb20gT3JiaVBheSBmb3IgcGF5bWVudCBQTVQtMjAyt2c4CwACAR89FzEf7j0E0hRvcmJpLTMwMDEyMDI2LTA5LTE1IDEzOjAwOjIxLjAwMDBFcnJvck9yYmkuTm90aWZ5LlNlbmRlclNlbmRBc3luY0ZhaWxlZCB0byBzZW5kIG5vdGlmaWNhdGlvbiB0byBjbGllbnQ6IFN5c3RlbS5OZXQuSHR0cC5IdHRwUmVxdWVzdEV4Y2VwdGlvbjogQ29ubmVjdGlvbiByZWZ1c2VkIHRvIGh0dHBzOi8vY2xpZW50LmV4YW1wbGUuY29tL3dlYmhvb2sKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuY3M6bGluZSA4OAogICBhdCBPcmJpLk5vdGlmeS5TZW5kZXIuU2VuZEFzeW5jKE5vdGlmaWNhdGlvbiBuKSBpbiAvc3JjL1NlbmRlci5jczpsaW5lIDg4CiAgIGF0IE9yYmkuTm90aWZ5LlNlbmRlci5TZW5kQXN5bmMoTm90aWZpY2F0aW9uIG4pIGluIC9zcmMvU2VuZGVyLmNzOmxpbmUgODgKICAgYXQgT3JiaS5Ob3RpZnkuU2VuZGVyLlNlbmRBc3luYyhOb3RpZmljYXRpb24gbikgaW4gL3NyYy9TZW5kZXIuAAAABg==";
+
+const SAMPLE_INOVAH="********************************************************************************\nLog file:       C:\\ProgramData\\System Innovators\\iNovah\\System Logs\\FAY71T\\AdminMgmtPortal.txt\nCreated on:     5/19/2023 16:06:58.944\n\nMachine:        SBOXAPP1E1\nProcessor count: 2\nO/S version:    Microsoft Windows NT 10.0.14393.0\nRuntime version: 4.0.30319.42000\n\niNovah Instance: FAY71T\n\n********************************************************************************\n\n================================================================================\nWhen:           5/19/2023 16:06:58.940 (20:06:58.940 UTC)\nEvent ID:       0\nSource:         Application\nCategory:       Error\nMethod name:    SII.iNovah2.Web.UI.Global.LoadSystemConfiguration\nThread ID:      1\n--------------------------------------------------------------------------------\nMessage:\n\n--------------------------------------------------------------------------------\nException:\n    Type:       SII.iNovah2.ConfigurationException\n    Message:    Unable to initialize iNovah connection configuration.  It appears that the key \"SystemWebServiceURL\" points to an invalid URL. The underlying connection was closed: Unable to connect to the remote server.\n================================================================================\nWhen:           5/19/2023 16:06:58.960 (20:06:58.960 UTC)\nEvent ID:       0\nSource:         Application\nCategory:       Error\nMethod name:    SII.iNovah2.Web.UI.Global.Application_Start\nThread ID:      1\n--------------------------------------------------------------------------------\nMessage:\nApplication initialization failed.\n--------------------------------------------------------------------------------\nException:\n    Type:       SII.iNovah2.ConfigurationException\n    Source:     SII.iNovah2.Web.UI\n    Target:     Void LoadSystemConfiguration()\n    Message:    Unable to initialize iNovah connection configuration.  It appears that the key \"SystemWebServiceURL\" points to an invalid URL. The underlying connection was closed: Unable to connect to the remote server.\n    --------------------------------------------------------------------------------\n    Stack trace:\n    at SII.iNovah2.Web.UI.Global.LoadSystemConfiguration()\n    at SII.iNovah2.Web.UI.Global.Application_Start(Object sender, EventArgs e)\n================================================================================\nWhen:           5/19/2023 16:07:01.931 (20:07:01.931 UTC)\nEvent ID:       0\nSource:         Application\nCategory:       Error\nMethod name:    SII.iNovah2.Web.UI.Global.LoadSystemConfiguration\nThread ID:      1\n--------------------------------------------------------------------------------\nMessage:\n\n--------------------------------------------------------------------------------\nException:\n    Type:       SII.iNovah2.ConfigurationException\n    Message:    Unable to initialize iNovah connection configuration.  It appears that the key \"SystemWebServiceURL\" points to an invalid URL. The underlying connection was closed: Unable to connect to the remote server.\n================================================================================\nWhen:           5/19/2023 16:09:12.104 (20:09:12.104 UTC)\nEvent ID:       0\nSource:         Application\nCategory:       Warning\nMethod name:    SII.iNovah2.Web.UI.SessionManager.Configure\nThread ID:      6\n--------------------------------------------------------------------------------\nMessage:\nConfigured session timeout (5 minutes) is below the recommended minimum of 20 minutes.\n--------------------------------------------------------------------------------\n================================================================================\nWhen:           5/19/2023 16:12:44.550 (20:12:44.550 UTC)\nEvent ID:       0\nSource:         Application\nCategory:       Error\nMethod name:    SII.iNovah2.Payments.PaymentProcessor.ProcessPayment\nThread ID:      14\n--------------------------------------------------------------------------------\nMessage:\nPayment authorization failed for tender CreditCard.\n--------------------------------------------------------------------------------\nException:\n    Type:       System.Data.SqlClient.SqlException\n    Source:     .Net SqlClient Data Provider\n    Target:     Void ProcessPayment(PaymentRequest)\n    Message:    Execution Timeout Expired.  The timeout period elapsed prior to completion of the operation or the server is not responding.\n    --------------------------------------------------------------------------------\n    Stack trace:\n    at System.Data.SqlClient.SqlConnection.OnError(SqlException exception, Boolean breakConnection)\n    at SII.iNovah2.Payments.PaymentProcessor.ProcessPayment(PaymentRequest request)\n================================================================================\nWhen:           5/19/2023 16:13:05.220 (20:13:05.220 UTC)\nEvent ID:       0\nSource:         Application\nCategory:       Information\nMethod name:    SII.iNovah2.Web.UI.Global.Application_Start\nThread ID:      1\n--------------------------------------------------------------------------------\nMessage:\nApplication started successfully.\n--------------------------------------------------------------------------------\n";
+</script>
+</body>
+</html>
